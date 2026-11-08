@@ -161,6 +161,74 @@ def extract_text(message):
 
 That one helper eliminates a whole class of production incidents: the first time you enable extended thinking or tools, index 0 stops being a text block, and code that assumed otherwise raises an attribute error on a perfectly valid response.
 
+### Thinking blocks
+
+When the model thinks, the `content` array opens with one or more `thinking` blocks, followed by the `text` or `tool_use` blocks that make up the actual answer:
+
+``` {.sourceCode .json}
+{
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Two parts to the question; solve the simpler one first...",
+      "signature": "WaUjzkypQ2mUEVM36O2Txu..."
+    },
+    {
+      "type": "text",
+      "text": "Based on my analysis..."
+    }
+  ]
+}
+```
+
+A thinking block has exactly three fields:
+
+-   `type` is always `"thinking"`.
+-   `thinking` is readable text, but it is never the raw chain of thought. At most it is a *summary* of the reasoning, written by a separate summarization model; no setting returns the raw reasoning. You are billed for the full reasoning tokens, not the summary, so the billed `output_tokens` will not match what you could count in the block.
+-   `signature` is an opaque, encrypted copy of the full reasoning. The API uses it to verify that the block came from Claude and to reconstruct the reasoning when you send the block back. Never parse, trim, or regenerate it.
+
+**Whether the `thinking` field contains text depends on `display`,** a field on the thinking configuration:
+
+  ----------------------------------------------------------------------------------------------------------
+  `display`             What the `thinking` field holds                Default on
+  --------------------- ---------------------------------------------- -------------------------------------
+  `"summarized"`        The reasoning summary.                         Opus 4.6, Sonnet 4.6, and earlier.
+
+  `"omitted"`           An empty string. `signature` is still          The current generation: Opus 5.5,
+                        present and complete.                          Sonnet 5.5, Haiku 5.5, Fable 5.1,
+                                                                       Mythos 5.1, the Claude 5 models,
+                                                                       Opus 4.8, and Opus 4.7.
+
+  `"updates"` (beta)    Empty for reasoning blocks; text only in the   Never; needs the beta header
+                        short progress notes some models write         `thinking-display-updates-2026-08-18`.
+                        between tool calls.
+  ----------------------------------------------------------------------------------------------------------
+
+So on a current model, an empty `thinking` string is the normal default, not a failure. To see the summary, ask for it explicitly:
+
+``` {.sourceCode .python}
+thinking={"type": "adaptive", "display": "summarized"}
+```
+
+`"omitted"` reduces latency, because the server skips streaming the thinking text, but not cost: the same reasoning is generated and billed either way, and the `signature` is identical. `display` is invalid with `thinking: {"type": "disabled"}`, since there is nothing to display.
+
+**Redacted blocks are a separate type.** When part of the reasoning is safety-redacted, the API returns a block with no readable text at all, only encrypted data:
+
+``` {.sourceCode .json}
+{ "type": "redacted_thinking", "data": "..." }
+```
+
+Do not confuse this with `display: "omitted"`, which returns an ordinary `thinking` block whose text field is empty.
+
+**Not every response has a thinking block.** With adaptive thinking the model can skip thinking on a simple request, and then no block is produced whatever `display` says. Where forced tool use is accepted, the response starts directly with the `tool_use` block. In a tool loop, further thinking blocks can appear between tool calls, each with its own signature. Dispatch on `block.type`; never assume a position.
+
+**Round-tripping rules.** These are where integrations break:
+
+1.  **Within a tool-use turn, thinking blocks are mandatory.** When you return tool results, send back every `thinking` and `redacted_thinking` block from that assistant turn complete, unmodified, and in the original order, alongside the `tool_use` it accompanied. Editing, reordering, or dropping part of the sequence returns a 400. The only tolerated change is text placed in the empty field of an omitted block, which is ignored.
+2.  **Filtering by type is a trap.** Code that keeps only `block.type == "thinking"` silently drops `redacted_thinking` blocks and breaks the protocol. The safe pattern is to append `response.content` verbatim, as the history example later in this chapter does.
+3.  **Across turns, pass everything back.** Outside tool use, omitting earlier turns' thinking is allowed, but the recommended practice is to send it all and let the API filter it. Whether prior-turn blocks stay in context, and are billed as input, depends on the model (Chapter 6).
+4.  **Keep the history append-only.** On Claude 5.1 and later models, the API checks each block's signature against the model that produced it and against everything sent before it: the `system` prompt, `tools`, and earlier messages. A block that fails is not used. Editing earlier history therefore costs you the reasoning attached to every later turn, not just the turn you edited.
+
 ## max\_tokens and Why It Is Required
 
 `max_tokens` is a required integer. There is no default.
@@ -172,7 +240,7 @@ Four consequences follow:
 1.  **It is a cap, not a target.** Setting `max_tokens: 8192` does not make responses longer. The model stops when it is done, and `stop_reason` is `end_turn`.
 2.  **It does not consume rate limit headroom.** Output-tokens-per-minute is measured against tokens actually generated, so a generous `max_tokens` carries no rate-limit penalty. This is the opposite of how reservation-style quotas work elsewhere.
 3.  **It must be within the model’s output limit.** Exceeding it is a 400.
-4.  **With extended thinking, thinking tokens count against it.** If you set `budget_tokens` for thinking, that budget must be at least 1024 and strictly less than `max_tokens`; otherwise there is no room left for a visible answer.
+4.  **Thinking tokens count against it.** All thinking generated in the turn comes out of `max_tokens`, even when `display` hides the text, so size it for reasoning plus answer. In the legacy manual mode (`thinking: {"type": "enabled", "budget_tokens": N}`, deprecated on the 4.6 models and rejected with a 400 on 4.7 and later), the budget must be at least 1,024 and strictly less than `max_tokens`; otherwise there is no room left for a visible answer.
 
 The practical failure mode of setting it too low is silent truncation. You get HTTP 200, a well-formed `Message`, and a partial answer — with `stop_reason: "max_tokens"` as the only signal. If your code does not check `stop_reason`, truncated JSON and half-finished sentences flow straight into your database.
 

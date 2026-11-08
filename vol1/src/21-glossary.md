@@ -40,7 +40,7 @@
 
 **Exponential backoff** — A retry strategy in which the wait between attempts grows geometrically, usually with random jitter added. It is the standard response to rate limits and transient server errors.
 
-**Extended thinking** — A mode in which the model produces reasoning content before its final answer, within a budget you set. It can improve performance on hard problems, and the thinking tokens count toward cost and latency.
+**Extended thinking** — A mode in which the model produces reasoning content before its final answer. The legacy manual form sets a fixed `budget_tokens`; current models use adaptive thinking steered by effort. It can improve performance on hard problems, and the thinking tokens count toward cost and latency.
 
 **Few-shot prompting** — Including a small number of worked input-output examples in the prompt to show the model the expected format or behavior. Examples are often more reliable than a long description of the same rule.
 
@@ -131,6 +131,8 @@
 **System prompt** — Instructions supplied separately from the conversation that set the model’s role, constraints, and context for the whole session. It is the right place for rules that should apply to every turn.
 
 **Temperature** — A sampling parameter that controls randomness. Lower values make output more deterministic, and the Claude API accepts values from 0 to 1.
+
+**Thinking block** — A response content block of type `thinking` with a `thinking` field (a summary of the reasoning, or an empty string under `display: "omitted"`) and an encrypted `signature`. It must be passed back unmodified during tool use. Safety-redacted reasoning arrives instead as a `redacted_thinking` block with an encrypted `data` field.
 
 **Token** — The unit a model reads and generates, typically a fragment of a word. Tokens determine cost, latency, and whether content fits within the context window.
 

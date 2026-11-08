@@ -75,7 +75,9 @@ Note the `index`. Blocks do not necessarily arrive one at a time in a single-blo
 
 `input_json_delta` is the one that catches people. The deltas are fragments of a JSON *string* — `{"location": "San Fra` is a legitimate delta. You cannot parse each one. You concatenate, then parse once the block closes; the final `tool_use.input` is always an object. Current models tend to emit one complete key-and-value at a time, which means you may see noticeable pauses between these events while the model works. That is normal, not a stall.
 
-Thinking blocks with `display: "omitted"` are a special case: you receive a single `thinking_delta` with an empty string, then a `signature_delta`, then the block closes. Do not interpret the empty thinking text as a failure.
+A thinking block opens with a `content_block_start` whose block is `{"type": "thinking", "thinking": "", "signature": ""}`. With `display: "summarized"`, `thinking_delta` events then stream the summary; a single `signature_delta` follows, and `content_block_stop` closes the block.
+
+Thinking blocks with `display: "omitted"`, the default on current models, are a special case: you receive a single `thinking_delta` with an empty string, then a `signature_delta`, then the block closes. Do not interpret the empty thinking text as a failure. With `display: "updates"` (beta), only progress-update blocks carry text in their `thinking_delta` events, and a pause of several seconds before one opens is normal. To reassemble complete blocks with their signatures, prefer the SDK's accumulator (`stream.get_final_message()` in Python) over concatenating deltas yourself.
 
 A `fallback` content block can arrive as a `content_block_start`/`content_block_stop` pair with no deltas between them. Handle zero-delta blocks gracefully.
 
@@ -229,6 +231,18 @@ Only `"ephemeral"` is supported as a cache type. Adding `"ttl": "1h"` selects th
 "cache_control": {"type": "ephemeral", "ttl": "1h"}
 ```
 
+`cache_control` can only sit on a content block, so whatever you mark must be in block-list form. `system` accepts a plain string, but a string has nowhere to carry the marker. The same applies to a message whose `content` is a string, as `question` is in the example above. To place a breakpoint inside `messages`, write that message's content as a list of blocks:
+
+``` {.sourceCode .python}
+messages=[{"role": "user", "content": [
+    {"type": "text", "text": LONG_DOCUMENT,
+     "cache_control": {"type": "ephemeral"}},
+    {"type": "text", "text": question},
+]}]
+```
+
+Here the document is cached and the question after it is not, so a new question against the same document still produces a hit. Tool definitions take the marker directly on the tool entry in `tools`.
+
 There is also an automatic mode: a top-level `cache_control` on the request, which places a breakpoint on the last cacheable block and moves it forward as the conversation grows. This is the easiest correct answer for an ordinary chat application. It consumes one of your breakpoint slots.
 
 ``` {.sourceCode .python}
@@ -243,10 +257,46 @@ response = client.messages.create(
 
 Limits and interactions:
 
--   **At most 4 explicit breakpoints** per request. Automatic caching occupies one slot; if you already have 4 explicit ones, the request returns 400.
+-   **At most 4 explicit breakpoints** per request. The four slots are shared across `tools`, `system`, and `messages`: a marker in any of them counts toward the same total. Automatic caching occupies one slot; if you already have 4 explicit ones, the request returns 400.
+-   The limit is **per API call, not per conversation**. Every call is built from scratch, so markers placed on earlier turns do not accumulate; you can place up to four again on each request.
 -   If the last block already carries explicit `cache_control` with the **same** TTL, automatic caching is a no-op. With a **different** TTL it is a 400.
 -   If the final block is not eligible, automatic caching walks backward to the nearest eligible block; if there is none, caching is skipped silently.
 -   Breakpoints themselves cost nothing. You pay only for tokens written, read, or left uncached.
+
+## Caching a Growing Conversation
+
+A breakpoint caches everything before it plus the marked block itself, in `tools` → `system` → `messages` order. Put the marker on the last block of the latest message and the cached prefix is the whole request: tools, system prompt, every earlier message, and every earlier block in the same message.
+
+Because the API is stateless, each turn resends the full history, and the marker moves to the newest block:
+
+  -------------------------------------------------------------------------------------------------
+  Turn   Request ends with                          Cache behaviour
+  ------ ------------------------------------------ -----------------------------------------------
+  1      system, user “Hi” **(marker)**             No entry exists yet: the whole prefix is a
+                                                    write.
+
+  2      system, user “Hi”, assistant “Hello!”,     The prefix up to “Hi” matches turn 1’s entry
+         user “Explain X” **(marker)**              and is read at the cache rate. Only the new
+                                                    blocks are processed and written as a new,
+                                                    longer entry.
+
+  3      ...as turn 2, plus the next exchange       Turn 2’s entry is read; the new exchange is
+         **(marker)**                               written.
+  -------------------------------------------------------------------------------------------------
+
+You do not need to keep the old marker on “Hi”. Matching is by content, not by marker position: on turn 2 the lookback (described below) walks back from the new marker and finds the entry turn 1 wrote. Two conditions keep this working:
+
+-   **The earlier history must stay byte-identical.** Editing or reformatting an earlier message makes everything from that point onward a miss.
+-   **The new marker must stay within the lookback window** of the last written entry. A turn that adds many blocks at once, such as a long run of tool calls in an agent loop, can outrun it; add a second breakpoint partway through the new blocks.
+
+### Explicit or Automatic?
+
+For this common case the two modes produce the same result: one breakpoint on the last block, caching the entire request. The differences are in who places it.
+
+-   **Automatic mode** is one top-level field. The API finds the last eligible block on every request, so you never touch your `messages` array to move a marker. It is the right default for an ordinary chat application.
+-   **Explicit markers** put the placement in your hands, and you are responsible for choosing a cacheable block. Use them when you need breakpoints in the middle of a request: after the tool definitions, after the system prompt, or after a large document, so that a change to a later layer does not throw away the earlier ones.
+
+The two can be combined, within the four-slot limit and the TTL rule above.
 
 ## What Is Cacheable, and the Prefix Rule
 
@@ -385,6 +435,18 @@ Caches are isolated at the organization level, always — no cross-organization 
 
 Batching inverts the latency/cost tradeoff. You submit many requests at once, poll, and collect results later. In exchange you pay **50% of standard pricing** on all batch usage.
 
+### Why the Batches API Exists
+
+A large share of real Claude traffic has no one waiting on any individual answer: classifying a million support tickets, summarizing a document archive, running an evaluation suite, generating labels or synthetic data, re-processing a corpus after a prompt change. Pushing that work through the synchronous Messages API has three costs:
+
+-   **Price.** You pay interactive rates for non-interactive work.
+-   **Rate-limit contention.** A backfill running at full speed consumes the same ITPM/OTPM budget as your production traffic, and can starve it.
+-   **Plumbing.** You have to build and operate your own concurrency control, throttling, backoff, and retry layer to push tens of thousands of requests through without tripping 429s.
+
+The Batches API trades latency for all three. The discount is 50% on input and output tokens and **stacks with prompt caching**. Batches draw on their own rate limits rather than your live per-minute limits, so bulk work does not compete with production. Anthropic does the scheduling, so your client code shrinks to create, poll, and collect.
+
+The lifecycle in one line: **create** the batch with a list of `{custom_id, params}` items → **poll** until `processing_status` is `ended` → **retrieve** the results file and join on `custom_id`. Each `params` object is an ordinary non-streaming Messages API request body.
+
 ``` {.sourceCode .python}
 from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
 from anthropic.types.messages.batch_create_params import Request
@@ -447,6 +509,10 @@ Note there is no separate `completed` or `failed` terminal state — poll for `e
 
 Under heavy demand processing can slow, which raises the share of expirations. Build for it: an `expired` result is a normal outcome to resubmit, not an exception.
 
+Two consequences of these timings are easy to miss. First, “most batches finish within an hour” is an observation, not a service level: the only guarantee is the 24-hour window, so a job with a harder deadline than that does not belong in a batch. Second, the 29-day retention is the end of the results, not just the batch: persist what you need as soon as the batch ends, because there is no way to regenerate expired results except by paying for the requests again.
+
+Cancellation is coarse. You can cancel a batch, but you cannot modify one: there is no way to add, remove, or edit individual requests after creation. Cancellation is also not instantaneous — the batch passes through `canceling`, requests already being processed may still complete, and those come back as `succeeded` and are **billed**. Only requests that had not yet reached the model come back as `canceled`.
+
 ### Result Types
 
   ---------------------------------------------------------------------------------------------------------------------------------
@@ -498,6 +564,47 @@ Supported inside batches: all active models, vision, tool use including server t
 Batch rate limits are separate: a shared RPM budget across endpoints, plus a cap on how many batch requests may sit in the processing queue, both tiered. A request counts against the queue limit until the model has processed it.
 
 Caching inside batches is best-effort, since you cannot control execution order. The useful pattern is to send one request with a **1-hour** breakpoint on the shared prefix synchronously, wait for it to complete, then submit the batch — which is also why `max_tokens: 0` pre-warming is disallowed inside a batch: the entry would likely expire before the dependent requests ran.
+
+### When to Batch, and When Not To
+
+Batching is the right tool when no human or downstream system is waiting on the individual answer and the job is large enough for the savings to matter:
+
+-   **Bulk offline processing:** classification, extraction, translation, tagging, moderation backfills.
+-   **Evaluations and benchmarking:** thousands of prompts against one model, or the same prompts against several. One batch can mix models and parameters, since each request carries its own `params`.
+-   **Scheduled pipelines:** nightly enrichment, report generation, re-processing a dataset after a prompt change.
+-   **Workloads with a large shared prefix** — the same system prompt and reference document for every item — where the batch discount and cache reads compound, subject to the best-effort caching caveat above.
+
+It is the wrong tool in four situations:
+
+-   **Interactive or latency-sensitive work.** Chat, autocomplete, and user-facing agents cannot tolerate an unpredictable completion time.
+-   **Dependent multi-step work.** Each batch request is one independent Messages call. A request may carry a multi-turn conversation history, but nothing in a batch can feed one request's output into another. An agentic tool-use loop, or a pipeline where step *N*+1 needs step *N*'s answer, would need a new batch per step, and the latency compounds with every step.
+-   **Small jobs.** For a few dozen requests, the polling and result-handling code costs more engineering than the discount saves.
+-   **Deadlines shorter than 24 hours** that must be met, as discussed under timing.
+
+### Limitations at a Glance
+
+  -------------------------------------------------------------------------------------------------------------------------
+  Limitation                       Consequence for your code
+  -------------------------------- ----------------------------------------------------------------------------------------
+  100,000 requests / 256 MB        Split larger jobs across several batches.
+
+  24-hour window                   Detect `expired` results and resubmit them; they are not billed.
+
+  No result ordering               Join on `custom_id` only; make it unique and meaningful.
+
+  Per-request outcomes             A batch can end with any mix of result types; handle each one.
+
+  Asynchronous validation          Smoke-test one request synchronously before submitting.
+
+  No streaming, fast mode,         These return validation errors inside a batch.
+  or `max_tokens: 0`
+
+  No modification after creation   Cancel and resubmit; in-flight requests may still complete and be billed.
+
+  29-day retention                 Persist results promptly; expired results cannot be recovered.
+
+  Best-effort caching              Warm the shared prefix synchronously with a 1-hour TTL first.
+  -------------------------------------------------------------------------------------------------------------------------
 
 ## Choosing Among the Three
 

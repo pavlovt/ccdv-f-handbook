@@ -16,3 +16,10 @@ ol, ul { margin: .7em 0; padding-left: 1.5em; }
 li { margin: .32em 0; }
 a { color: #a8553a; }
 hr { border: none; border-top: 1px solid #d9d4cc; margin: 2em 0; }
+/* Pandoc's highlighting CSS sets white-space: pre on highlighted code, which
+   truncates long lines in readers that clip overflow. Force wrapping as a
+   fallback; build.py also hard-wraps long code lines. */
+pre > code.sourceCode { white-space: pre-wrap !important; overflow-wrap: anywhere; word-wrap: break-word; }
+pre > code.sourceCode > span { max-width: 100%; }
+pre, pre code { white-space: pre-wrap !important; overflow-wrap: anywhere; word-wrap: break-word; }
+div.sourceCode { overflow: visible; }

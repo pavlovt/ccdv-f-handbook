@@ -116,8 +116,11 @@ def build(vol):
     cmd = ["pandoc", "-f", "markdown-smart", "-t", "epub3",
            "--metadata-file", os.path.join(ROOT, vol, "meta.yaml"),
            "--css", os.path.join(ROOT, "style.css"),
-           "--toc", "--toc-depth=2", "--epub-chapter-level=1",
-           "-o", out] + files
+           "--toc", "--toc-depth=2", "--epub-chapter-level=1"]
+    # Embed the body font so readers never substitute a system font for it.
+    for font in sorted(glob.glob(os.path.join(ROOT, "fonts", "*.ttf"))):
+        cmd += ["--epub-embed-font", font]
+    cmd += ["-o", out] + files
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"{vol}: pandoc failed\n{r.stderr}")

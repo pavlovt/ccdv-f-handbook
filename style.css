@@ -1,4 +1,13 @@
-body { font-family: Georgia, "Times New Roman", serif; line-height: 1.6; margin: 0 5%; }
+/* Carlito (SIL OFL, see fonts/LICENSE.txt), a free font metric-compatible with
+   Calibri, is embedded in every EPUB by build.py. Readers that resolve font
+   names against the system, SumatraPDF on Windows among them, rendered the old
+   Georgia body text in a bold face; an embedded font under its own family name,
+   with an explicit weight per file, avoids that. */
+@font-face { font-family: "Handbook Sans"; font-weight: normal; font-style: normal; src: url("../fonts/Carlito-Regular.ttf"); }
+@font-face { font-family: "Handbook Sans"; font-weight: normal; font-style: italic; src: url("../fonts/Carlito-Italic.ttf"); }
+@font-face { font-family: "Handbook Sans"; font-weight: bold; font-style: normal; src: url("../fonts/Carlito-Bold.ttf"); }
+@font-face { font-family: "Handbook Sans"; font-weight: bold; font-style: italic; src: url("../fonts/Carlito-BoldItalic.ttf"); }
+body { font-family: "Handbook Sans", Calibri, Carlito, sans-serif; font-weight: normal; line-height: 1.5; margin: 0 5%; }
 h1 { font-size: 1.7em; margin-top: 1.4em; margin-bottom: .7em; page-break-before: always; line-height:1.25; }
 h2 { font-size: 1.25em; margin-top: 1.8em; border-bottom: 1px solid #d9d4cc; padding-bottom: .22em; }
 h3 { font-size: 1.05em; margin-top: 1.4em; }

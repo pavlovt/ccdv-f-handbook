@@ -102,6 +102,24 @@ def wrap_code(epub):
     shutil.move(tmp, epub)
 
 
+_SPLIT_FLAG = None
+
+
+def split_flag():
+    """Chapter-split option for the installed pandoc.
+
+    pandoc 3.0 renamed --epub-chapter-level to --split-level and warns on the
+    old name; older versions only know the old one.
+    """
+    global _SPLIT_FLAG
+    if _SPLIT_FLAG is None:
+        out = subprocess.run(["pandoc", "--version"], capture_output=True, text=True).stdout
+        m = re.search(r"pandoc(?:\.exe)? (\d+)", out)
+        major = int(m.group(1)) if m else 3
+        _SPLIT_FLAG = "--split-level=1" if major >= 3 else "--epub-chapter-level=1"
+    return _SPLIT_FLAG
+
+
 def build(vol):
     files = sorted(glob.glob(os.path.join(ROOT, vol, "src", "*.md")))
     if not files:
@@ -116,7 +134,7 @@ def build(vol):
     cmd = ["pandoc", "-f", "markdown-smart", "-t", "epub3",
            "--metadata-file", os.path.join(ROOT, vol, "meta.yaml"),
            "--css", os.path.join(ROOT, "style.css"),
-           "--toc", "--toc-depth=2", "--epub-chapter-level=1"]
+           "--toc", "--toc-depth=2", split_flag()]
     # Embed the body font so readers never substitute a system font for it.
     for font in sorted(glob.glob(os.path.join(ROOT, "fonts", "*.ttf"))):
         cmd += ["--epub-embed-font", font]
@@ -141,6 +159,9 @@ def main(argv):
         if r.returncode != 0:
             print("preflight found defects; build stopped")
             return 1
+    if not shutil.which("pandoc"):
+        print("pandoc not found on PATH; install it from https://pandoc.org/installing.html")
+        return 1
     ok = all([build(v) for v in vols])
     return 0 if ok else 1
 

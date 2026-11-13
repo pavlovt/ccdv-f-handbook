@@ -81,9 +81,9 @@ Because the official prep course is also gated, this book is written to be usabl
 
 Three points in this table affect how you plan.
 
-**Pacing.** 120 minutes for 53 questions is about 2.3 minutes per question. Aim for roughly two minutes per question, which leaves around ten minutes for a final pass on items you flagged. Scenario-based multiple response items describe a situation and ask you to select more than one answer. Read the full stem and every option. Do not stop at the first answer that looks right when the item asks for several.
+**Pacing.** 120 minutes for 53 questions is about 2.3 minutes per question. Aim for roughly two minutes per question. That uses about 106 minutes and leaves around 14 for a final pass on items you flagged. Scenario-based multiple response items describe a situation and ask you to select more than one answer. Read the full stem and every option. Do not stop at the first answer that looks right when the item asks for several.
 
-**Scoring.** A scaled score is not a percentage. Do not try to compute a raw pass mark from practice scores. Aim for consistent accuracy well above the level of guessing across all domains, and treat the 720 threshold as a moving target that the exam converts for you.
+**Scoring.** A scaled score is not a percentage. Your raw result is converted onto the 100–1000 scale, and the conversion can differ from one version of the exam to another, so the number of correct answers that equals 720 is not published and is not fixed. Do not try to work out a raw pass mark from practice scores. Aim instead for consistent accuracy, well above guessing, in every domain.
 
 **Name and cancellation.** A name correction must be requested at least 24 hours before your appointment, through certifications-support\@anthropic.com. Corrections take 24–48 business hours, so a late request may not finish in time. You may reschedule or cancel free of charge up to 24 hours before the appointment. Inside that window, or if you do not show up, the fee is forfeited.
 
@@ -147,7 +147,7 @@ The official estimate is 40 to 80 hours of study. The table below assumes 60 hou
   13             Full-Length Mock Exam                                       Whole exam                         3                                2–4
   --------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-The hours follow the domain weights, with two adjustments. Chapters 3 to 5 and Chapter 11 get slightly less time than their weights suggest, because their concepts reappear in Chapters 6 to 9 and in the mock. If the Messages API is new to you, add time to Chapter 3 first. Chapter 10 is light because Claude Code is 3.1% of the questions.
+Chapters 1, 2, and 13 take 6 of the 60 hours. The remaining 54 follow the domain weights, with two adjustments. Chapters 3 to 5 and Chapter 11 get slightly less time than their weights suggest, because their concepts reappear in Chapters 6 to 9 and in the mock. If the Messages API is new to you, add time to Chapter 3 first. Chapter 10 is light because Claude Code is 3.1% of the questions.
 
 ## Build two projects alongside the reading
 

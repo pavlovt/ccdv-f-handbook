@@ -139,24 +139,25 @@ PERMANENT = {
 
 
 class RetryBudget:
-    """Token bucket over retries, expressed as a fraction of successes."""
+    """Token bucket over retries. Each success deposits `ratio` tokens and
+    each retry withdraws one, so retries stay near `ratio` of successful
+    traffic. A small time-based trickle keeps a few retries available
+    when traffic is low."""
 
     def __init__(self, ratio: float = 0.1, min_per_s: float = 1.0, burst: float = 20.0):
         self._lock = threading.Lock()
         self.ratio, self.min_per_s, self.burst = ratio, min_per_s, burst
         self._tokens = burst
         self._last = time.monotonic()
-        self._success_rate = 0.0
 
     def _refill(self) -> None:
         now = time.monotonic()
-        allowance = max(self.min_per_s, self._success_rate * self.ratio)
-        self._tokens = min(self.burst, self._tokens + (now - self._last) * allowance)
+        self._tokens = min(self.burst, self._tokens + (now - self._last) * self.min_per_s)
         self._last = now
 
     def record_success(self) -> None:
         with self._lock:
-            self._success_rate = 0.95 * self._success_rate + 0.05 * 10.0
+            self._tokens = min(self.burst, self._tokens + self.ratio)
 
     def try_withdraw(self) -> bool:
         with self._lock:
@@ -711,7 +712,7 @@ Medians, not means: a single 128,000-token response moves a mean by enough to ma
 
 **Investigation.** Usage API grouped by model shows volume flat and token counts flat. Grouped by `context_window` and model, the picture resolves: Haiku 5.5 requests in the over-100K bucket have gone from 3% of traffic to 71%. The deploy log shows nothing that day — but a *content* change the previous evening added two new sections to a shared retrieval template, lifting the median assembled prefix from 94,000 tokens to 103,000.
 
-**Root cause.** Haiku 5.5 is priced by prompt length with a hard step at 100,000 tokens: \$0.10 → \$0.50 per MTok input, with cache reads counted toward the threshold and stepping up too. A 9.5% increase in prompt size produced a 5× increase in unit price, applied to the whole request. Nothing failed; the bill simply quintupled.
+**Root cause.** Haiku 5.5 is priced by prompt length with a hard step at 100,000 tokens: \$0.10 → \$0.50 per MTok input, with cache reads counted toward the threshold and stepping up too. A 9.6% increase in prompt size produced a 5× increase in unit price, applied to the whole request. Nothing failed; the bill simply quintupled.
 
 **Fix.** Immediate: cap retrieval so assembled prefixes stay under 92,000 tokens, with a hard assertion at request-build time. Structural: route by measured prefix size, sending anything above 90,000 tokens to Sonnet 5.5, where pricing is flat across the whole 1M window and quality is higher anyway. Permanent: an alert on the fraction of Haiku requests over 100K tokens, which is now the single most valuable cost alert in the system. A margin was deliberately left between the 92,000-token cap and the 100,000-token threshold because token counts are estimates until the request is sent.
 

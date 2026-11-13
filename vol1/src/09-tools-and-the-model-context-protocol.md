@@ -243,7 +243,7 @@ Details worth knowing for the exam and for production:
 
 -   With `any` or `tool`, the API starts the assistant turn for the model so that it opens directly with the tool call (the turn is prefilled). The model therefore emits no explanatory text before the `tool_use`. If you want prose alongside the call, use `auto` and instruct it in the prompt.
 -   Forcing a tool is incompatible with manual extended thinking (`thinking: {type: "enabled"}`); that combination returns an error. Adaptive thinking is allowed, but a forced call skips the thinking step.
--   Documentation for the newest model generations states that some of them reject `any` and `tool` with a 400. Check the support matrix for the model you deploy. The portable alternative is `auto` with `strict: true` tools, or structured outputs when you only need a fixed JSON shape.
+-   On the newest models, forcing is not available at all: Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1 reject `any` and `tool` with a 400. Check the support matrix for the model you deploy. The portable alternative is `auto` with `strict: true` tools, or structured outputs when you only need a fixed JSON shape.
 -   Changing `tool_choice` between requests invalidates cached message blocks under prompt caching; tool definitions and the system prompt stay cached.
 
 ## Parallel Tool Calls

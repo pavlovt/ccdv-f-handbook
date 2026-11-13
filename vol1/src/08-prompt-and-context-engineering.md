@@ -132,12 +132,12 @@ There are two ways to get it, and they are related but not the same.
 1.  **Prompted CoT.** You instruct the model to reason before answering, typically asking for reasoning in one tag and the final answer in another so your code can parse out the answer.
 2.  **Built-in thinking.** You enable thinking through the API, and the model produces reasoning in separate thinking blocks before its response.
 
-For current models, the documentation’s recommendation is adaptive thinking: you declare `thinking: {"type": "adaptive"}` (or rely on the model’s default where thinking is always on), and the model decides whether and how much to reason, guided by the `effort` setting in `output_config` (levels range from low through high, with higher tiers above). The older manual form that set a `budget_tokens` allowance is deprecated; on recent models (Claude 4.7 and later, per the documentation) specifying it returns a 400 error. Thinking tokens come out of your `max_tokens` and are billed as output.
+For current models, the documentation’s recommendation is adaptive thinking: you declare `thinking: {"type": "adaptive"}` (or rely on the model’s default where thinking is always on), and the model decides whether and how much to reason, guided by the `effort` setting in `output_config` (`low`, `medium`, `high`, `xhigh`, or `max`). The older manual form that set a `budget_tokens` allowance is deprecated; on recent models (Claude 4.7 and later, per the documentation) specifying it returns a 400 error. Thinking tokens come out of your `max_tokens` and are billed as output.
 
 Practical rules:
 
 -   **Prefer a general instruction over a hand-written script.** “Think carefully about edge cases before answering” generally beats a prescriptive step list, because the model’s own plan is often better than yours. Reserve explicit steps for a process you genuinely require.
--   **Turn the dial before rewriting the prompt.** If accuracy is low on a reasoning task, raise effort; if latency is the problem on simple tasks, lower it. Changing effort between requests invalidates part of the prompt cache, so keep it stable per workload.
+-   **Turn the dial before rewriting the prompt.** If accuracy is low on a reasoning task, raise effort; if latency is the problem on simple tasks, lower it. Changing effort between requests invalidates the message-level part of the prompt cache, so keep it stable per workload.
 -   **Manual CoT is the fallback** when thinking is off or unavailable: ask for reasoning, then the final answer in `<answer>` tags. On the newest models the documentation advises relying on built-in thinking rather than asking for reasoning in tags, and a prompt demanding `<thinking>` tags may be declined.
 -   **Self-verification helps.** Ask the model to check its answer against explicit criteria before finishing. This is cheap and catches errors on code and calculations, though newer models may over-verify if the instruction is carried over unnecessarily.
 -   **Size `max_tokens` for thinking plus answer.** Otherwise the response is truncated with `stop_reason: "max_tokens"`.
@@ -325,7 +325,7 @@ A. Raise the model tier; larger models are immune to long-context dilution. B. R
 
 A. Increase temperature so the model explores alternatives. B. Remove the retrieved context to avoid confusing the model. C. Instruct it to answer only from the provided sources, quote supporting passages, and reply that the answer is not found when the sources are insufficient. D. Add a role such as “world-class expert” to increase confidence.
 
-**Q8.9** A team’s prompt caching shows near-zero hit rates. The system prompt begins with “Current time: . User: .” followed by 3,000 tokens of static policy text. What is the most likely cause and fix?
+**Q8.9** A team’s prompt caching shows near-zero hit rates. The system prompt begins with `Current time: {now}. User: {user_name}.`, filled in per request, followed by 3,000 tokens of static policy text. What is the most likely cause and fix?
 
 A. Volatile values at the start of the prefix change every request and defeat prefix matching; put static content first and per-request values after it. B. Caching only works with the REST API. C. Role instructions must come last; move the role to the end. D. The policy text is too long; shorten it below 512 tokens.
 

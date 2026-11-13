@@ -151,8 +151,12 @@ def run_agent(
             # The final content block may be a truncated tool_use. Do not execute it.
             return Outcome("output_truncated", messages, tokens_used, turns)
 
+        if response.stop_reason == "pause_turn":
+            continue    # a server tool paused; resending the history resumes it
+
         if response.stop_reason != "tool_use":
-            return Outcome("completed", messages, tokens_used, turns)
+            # end_turn on success; refusal and others are reported as they are
+            return Outcome(response.stop_reason, messages, tokens_used, turns)
 
         # --- Execute every requested tool; parallel calls are normal -----
         results = []
@@ -181,7 +185,7 @@ def run_agent(
         messages.append({"role": "user", "content": results})
 ```
 
-Several details in that loop are the difference between a demo and a production system.
+Several details in that loop are the difference between a demo and a production system. (One thing it deliberately leaves out is an approval gate in front of the irreversible `issue_refund`; that is added in the human-in-the-loop section below.)
 
 **Append the assistant message before executing anything.** The conversation must contain Claude’s `tool_use` blocks before the matching `tool_result` blocks, or the next request is malformed.
 
@@ -301,7 +305,7 @@ Context accumulates monotonically within a session: system prompt, tool definiti
 
 Three server-side mechanisms address this, and they are complementary rather than alternatives.
 
-**Compaction** is the recommended default for long-running work. It summarizes the conversation and replaces the history with the summary. In the SDK flow, token usage is checked after each response against a threshold (default 100,000 tokens); when crossed, a summary prompt is injected, Claude produces a structured summary, and that summary replaces the history. The default summary structure covers task overview, current state, important discoveries, next steps, and context to preserve. Server-side compaction is applied by passing the `compact_20260112` edit in `context_management`; the older client-side `compaction_control` parameter is deprecated in TypeScript and Ruby and removed from the Python SDK in v1.0.
+**Compaction** is the recommended default for long-running work. When the conversation crosses a token threshold (default 100,000 tokens), Claude writes a structured summary of it, and that summary replaces the earlier history. The default summary covers task overview, current state, important discoveries, next steps, and context to preserve. On the API, server-side compaction is enabled by passing the `compact_20260112` edit in `context_management`. The older client-side mechanism, the SDK’s `compaction_control` parameter, checked usage after each response and injected the summary prompt itself; it is deprecated in TypeScript and Ruby and removed from the Python SDK in v1.0.
 
 Compaction’s limitation is inherent: it is lossy, so it is a poor fit for tasks requiring exact recall of early details. Instructions placed only in the initial prompt may not survive. The fix is to put persistent rules somewhere re-injected on every request — a `CLAUDE.md` in the SDK — rather than in the opening message.
 
@@ -332,7 +336,7 @@ A valuable property of context editing: your client keeps the full unmodified hi
 
 **The memory tool** (`memory_20250818`) lets Claude write information to persistent files. Paired with either mechanism, it closes the loss problem: Claude receives an automatic warning as the clearing threshold approaches and can save what matters before it is removed, then read it back on demand. This is the right answer when a run must preserve specific findings across compaction.
 
-For what to do when the window fills mid-loop, the honest answer is that the architecture is designed so this does not happen as an error. There is no generic overflow exception to catch. Context editing clears before the model sees an oversized prompt; compaction checks after each response and summarizes when the threshold is crossed; the memory tool warns Claude in advance. If compaction triggers while a tool use is pending, that tool use block is removed before summarizing and Claude re-issues the call after resuming if it still needs it. Your job is to configure these mechanisms with thresholds that leave headroom — not to write a handler for a window-full error.
+What happens when the window fills mid-loop depends on whether you configured these mechanisms. With none of them, an over-long prompt is simply rejected with a 400 “prompt is too long” (Chapter 2), and the loop has no clean way to recover. With them, the window should never fill: context editing clears before the model sees an oversized prompt, compaction summarizes once the threshold is crossed, and the memory tool warns Claude in advance. If compaction triggers while a tool use is pending, that tool use block is removed before summarizing, and Claude re-issues the call after resuming if it still needs it. Your job is to configure these mechanisms with thresholds that leave headroom, rather than to write a recovery handler for a window-full error.
 
 One caveat with server tools: `cache_read_input_tokens` can include reads from internal calls, so the SDK may overcount and compact earlier than necessary. Use the token counting endpoint when you need an accurate context length.
 
@@ -403,7 +407,7 @@ The fixes are measurement and caps. Log the full `usage` object per turn, includ
 
 A database is down, a credential expired, a tool schema is wrong. Claude receives `is_error` results and keeps trying, sometimes with creative variations that make it worse.
 
-Track consecutive failures per tool and terminate the run when a threshold is crossed, as the loop above does. The reasoning: if a tool has failed three times in a row, the problem is the environment, not the model’s approach, and further turns are pure cost. Distinguish retryable failures (timeout, rate limit) from permanent ones (authentication, schema validation) and do not feed permanent failures back as though retry might help — a 401 should end the run, not generate five more attempts.
+Track consecutive failures and terminate the run when a threshold is crossed. The loop above does the simplest version, counting consecutive turns in which any tool failed; a counter per tool name is finer-grained and does not end the run because two different tools failed once each. The reasoning: if a tool has failed three times in a row, the problem is the environment, not the model’s approach, and further turns are pure cost. Distinguish retryable failures (timeout, rate limit) from permanent ones (authentication, schema validation) and do not feed permanent failures back as though retry might help — a 401 should end the run, not generate five more attempts.
 
 ### Hallucinated tool arguments
 
@@ -412,7 +416,7 @@ The model invents an order ID, passes a string where an integer belongs, referen
 The structural fixes, in order of effectiveness:
 
 1.  **Validate every tool input against its schema in your dispatch layer**, before executing. Never trust `block.input` to conform just because you declared a schema. Return validation failures as `is_error` results with the specific problem named; Claude corrects well when told exactly what was wrong.
-2.  **Write schemas that constrain.** Use `enum` for closed sets, `minimum`/`maximum` for numbers, `required` honestly. A parameter described as “the status” invites invention; one declared as `enum: ["open", "shipped", "cancelled"]` does not.
+2.  **Write schemas that constrain.** Use `enum` for closed sets, `minimum`/`maximum` for numbers, `required` honestly. (Numeric bounds are allowed on non-strict tools and documented to the model; strict mode does not support them, so your dispatch-layer validation is what enforces them.) A parameter described as “the status” invites invention; one declared as `enum: ["open", "shipped", "cancelled"]` does not.
 3.  **Describe tools precisely, including limits and side effects.** The `description` is the model’s only documentation. “Search orders by customer email. Returns at most 20 matches. Requires a full email address, not a partial string” prevents a class of errors that no amount of system prompting will.
 4.  **Never execute a tool call from a response with `stop_reason: "max_tokens"`.** Truncated `input` JSON can parse as valid-looking partial arguments.
 
@@ -475,7 +479,7 @@ async def fix_failing_tests():
 asyncio.run(fix_failing_tests())
 ```
 
-One behavioral detail that catches people: a single-shot `query()` yields the final result message and *then* raises, so wrap the loop in a try block if your code needs to continue past a limit. A streaming-input session stays alive instead.
+One behavioral detail that catches people: when a single-shot `query()` run ends on a limit or error (such as `error_max_turns`), it yields the final result message and *then* raises, so wrap the loop in a try block if your code needs to continue past a limit. A streaming-input session stays alive instead.
 
 When should you not use it? When your tools are entirely your own domain operations and you need none of the built-in file and shell tooling, the Agent SDK’s surface is weight you are not using — the client SDK’s tool runner may fit better. When you need control flow the SDK does not express, a hand-rolled loop is the honest choice. And when the task is actually a workflow, none of this applies: write the code path.
 

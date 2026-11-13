@@ -8,7 +8,7 @@ They are orthogonal to the model’s capabilities and almost entirely a property
 
 Set `"stream": true` and the response arrives as server-sent events instead of one JSON document. You get three distinct benefits, and only the first is about user experience.
 
-**Perceived latency.** Time-to-first-token is a fraction of time-to-last-token. For a 2,000-token answer, the user sees text in under a second rather than after thirty.
+**Perceived latency.** Time-to-first-token is a fraction of time-to-last-token. For a 2,000-token answer, the user sees text in under a second rather than after thirty seconds.
 
 **Connection survival.** This is the operational reason, and it is not optional at scale. A non-streaming request holds an idle HTTP connection for the full generation. Load balancers, proxies, and NAT devices drop idle connections. For requests that may run beyond roughly ten minutes, the documentation directs you to streaming or the Batches API, and the SDKs validate that a non-streaming Messages request is not *expected* to exceed a ten-minute timeout. The SDK also sets a TCP keep-alive socket option. A large `max_tokens` on a non-streaming call is the canonical way to produce failures that return nothing at all — no HTTP status, no body, just a dead socket.
 
@@ -196,7 +196,9 @@ Tool use and thinking blocks cannot be partially recovered. If a stream dies mid
 
 ## Prompt Caching: What It Is
 
-Prompt caching lets the API reuse the computed representation of a prompt prefix across requests. You mark a point in the prompt; everything up to and including that point becomes a cache entry; subsequent requests with a byte-identical prefix read it instead of recomputing it.
+Before the model can write a single word of its answer, it has to read and process every token of the prompt. For a 100,000-token prompt that is a large amount of work, and it is repeated in full on every request, even when most of the prompt (the system prompt, the tool definitions, a reference document) is exactly the same as last time.
+
+Prompt caching lets the API keep the result of that processing for the beginning of a prompt and reuse it. You mark a point in the prompt; everything up to and including that point becomes a cache entry; later requests that start with exactly the same content, byte for byte, read the stored result instead of processing those tokens again. Only the part after the matching beginning (the new question, the latest turn) is processed fresh. The cache stores the model’s internal working state, not your text, and it never changes the answer: a cached request produces the same output it would have without caching.
 
 The economics are what make it mandatory for serious workloads:
 
@@ -207,7 +209,7 @@ The economics are what make it mandatory for serious workloads:
   Cache write, 1-hour TTL     2×
   Cache read (hit)            0.1×, and as low as 0.025×–0.05× on some models
 
-A cache read costs roughly a tenth of a fresh read. Write once at 1.25×, read ten times at 0.1×, and you have spent 2.25× instead of 11×. Cache hits also reduce latency — the prefix is not reprocessed — and, critically, **cache reads do not count toward your input-tokens-per-minute rate limit** on current models. That last property is how a workload with a 200,000-token shared context stays inside a 2,000,000 ITPM budget at meaningful concurrency.
+A cache read costs roughly a tenth of a fresh read. Write once at 1.25×, read ten times at 0.1×, and you have spent 2.25× instead of 11×. Cache hits also reduce latency — the prefix is not reprocessed — and, critically, **cache reads do not count toward your input-tokens-per-minute rate limit** on current models. That last property is how a workload with a 200,000-token shared context stays inside a 2,000,000 ITPM budget at meaningful concurrency: if the shared context counted, ten requests a minute would use the whole budget.
 
 ## Marking a Cache Breakpoint
 
@@ -382,18 +384,23 @@ Changes propagate downward through the `tools → system → messages` hierarchy
   ----------------------------------------------------- ----------------------------------------------------
   Any tool definition — name, description, parameters   Tools, system, and messages — everything
 
-  `tool_choice`                                         System and messages
-
-  Adding or removing images anywhere in the prompt      System and messages
-
   Toggling web search or citations                      System and messages
+
+  Switching `speed` between fast and standard           System and messages
 
   Editing the top-level `system` text                   System and messages
 
-  Appending a new user turn                             Only content after the last breakpoint
+  `tool_choice`                                         Messages only
 
-  Thinking configuration or effort level                Model-dependent; may invalidate from system onward
+  Adding or removing images anywhere in the prompt      Messages only
+
+  Thinking configuration or effort level                Messages only
+
+  Appending a new user turn                             Nothing already cached; only the new content is
+                                                        processed
   ----------------------------------------------------------------------------------------------------------
+
+Note the middle group. `tool_choice`, images, and thinking settings are not part of the system prompt, so they leave the tools and system entries intact and cost you only the message-level entries. Toggling web search or citations, by contrast, changes the system prompt the API builds for you, so it reaches one level higher.
 
 The asymmetry is the design guidance in disguise. Appending is cheap; editing anything early is catastrophic. So:
 

@@ -318,7 +318,7 @@ The input term is quadratic in `N`. Take `P = 12,000`, `g = 2,500`, `o = 600`, a
   80          8,860,000      48,000          \$36.40          \$3.74                \$0.047
   --------------------------------------------------------------------------------------------------------
 
-Doubling the turn count from 20 to 40 multiplies the uncached cost by 3.3, not 2. Prompt caching changes the constant dramatically — the cached column reads the stable prefix at \$0.20/MTok instead of \$4.00 and pays the \$5.00 write only on the growing tail — but it does not change the exponent. The curve is still superlinear, and the average cost per turn still rises monotonically: a turn late in a run costs more than a turn early in it, for identical work.
+Doubling the turn count from 20 to 40 multiplies the uncached cost by 3.3, not 2. Prompt caching changes the constant dramatically — the cached column assumes a breakpoint at the end of every request, so everything sent on earlier turns is read back at \$0.20/MTok instead of \$4.00, and only the new material is written at \$5.00 (the 12,000-token prefix once, then each turn’s 2,500 new tokens) — but it does not change the exponent. The curve is still superlinear, and the average cost per turn still rises monotonically: a turn late in a run costs more than a turn early in it, for identical work.
 
 Three consequences follow, and they are the quantitative justification for most of the rest of this chapter.
 
@@ -486,7 +486,7 @@ The `blocked` list is the part people leave out and then regret. A fresh run wit
 
 A tool that fails once is information. A tool that fails five times is a budget leak, because each failure costs a full turn: the model’s reasoning about the failure, plus the whole accumulated context re-sent.
 
-At turn 25 of the example in §4.2, one wasted turn costs roughly \$0.034 cached and \$0.30 uncached. Five of them on the same broken tool is real money for zero progress, and the transcript now contains five near-identical failures that will be re-sent on every remaining turn — so the waste compounds.
+At turn 25 of the example in §4.2, one wasted turn costs roughly \$0.04 cached and \$0.30 uncached. Five of them on the same broken tool is real money for zero progress, and the transcript now contains five near-identical failures that will be re-sent on every remaining turn — so the waste compounds.
 
 The policy that works has three tiers.
 
@@ -573,7 +573,7 @@ class EvalCase:
 
 def grade(case: EvalCase, result: RunResult) -> dict[str, Any]:
     used = {
-        b["name"]
+        b.name                       # assistant content holds SDK block objects
         for m in result.transcript
         if m["role"] == "assistant"
         for b in (m["content"] if isinstance(m["content"], list) else [])

@@ -166,7 +166,7 @@ The common failure is to treat every bad output as a prompt problem and keep edi
 
   Model choice            Correct context, clear prompt, working tools, yet the task is beyond the model’s capability or too slow or costly   Run the identical request on a stronger model. If it succeeds, you have a capability gap and can choose between a better model or decomposing the task.
 
-  Parameters or limits    Truncated output, odd randomness, ignored stop conditions                                                           Check `max_tokens`, stop reason, temperature, and token budget.
+  Parameters or limits    Truncated output, odd randomness, ignored stop conditions                                                           Check `max_tokens`, stop reason, effort level, temperature (on older models that still accept it), and token budget.
 
   Your own code           Parsing errors, off-by-one in history assembly, dropped messages                                                    Unit test the deterministic code with the captured payload.
   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

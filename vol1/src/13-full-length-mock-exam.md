@@ -13,7 +13,7 @@ This is a full-length, timed practice exam for the **Claude Certified Developer 
 
 ### How to interpret your score
 
-The real exam reports a scaled score from **100 to 1000**, with **720 required to pass**. Scaling means there is no published mapping from raw questions correct to scaled score, but 720 corresponds to roughly **70% of the content mastered**. So:
+The real exam reports a scaled score from **100 to 1000**, with **720 required to pass**. Scaling means there is no published mapping from raw questions correct to scaled score. As a working assumption only, this book treats about **70% correct** as the level to clear on practice exams. So:
 
   -----------------------------------------------------------------------------------------------------
   Raw score (of 53)                   Approximate reading
@@ -71,7 +71,7 @@ Begin when your timer starts.
 **M5.** **(Select TWO)** A service caches a large static system prompt with a `cache_control` breakpoint. The team observes that `cache_read_input_tokens` is 0 and `cache_creation_input_tokens` is non-zero on nearly every request, even though the prompt text is byte-identical across requests. Which two causes are consistent with these observations?
 
 -   A. The prompt is below the model’s minimum cacheable token count, so the API returns a 400 error that the client is swallowing.
--   B. The request sometimes includes an image and sometimes does not, which invalidates the cached prefix at and after the system level.
+-   B. Some requests enable citations and others do not; toggling citations changes the system prompt the API builds, which invalidates the cached prefix at and after the system level.
 -   C. The requests are being issued from two different workspaces, and cache entries are isolated per workspace.
 -   D. The breakpoint is placed on a block that is identical, but a *tool definition* earlier in the prefix is being regenerated in a different order on each request, invalidating everything after it.
 -   E. `cache_read_input_tokens` is only populated on streaming requests, so a non-streaming client never sees cache reads.

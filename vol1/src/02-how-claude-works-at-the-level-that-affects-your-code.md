@@ -9,7 +9,7 @@ Claude does not read characters or words. Text is split by a tokenizer into toke
 Consequences you will actually hit:
 
 -   **Counts are not proportional to characters or words.** English prose averages somewhere around three to four characters per token, but that is a rule of thumb, not a contract. Treat it as a rough budget estimate only.
--   **Content type matters.** Source code, JSON with long keys, base64 blobs, UUIDs, and minified text tokenize poorly (many tokens per character). Non-English languages and non-Latin scripts frequently cost more tokens per word than English.
+-   **Content type matters.** Source code, JSON with long keys, base64 blobs, UUIDs, and minified text tokenize poorly (few characters per token, so many tokens for their length). Non-English languages and non-Latin scripts frequently cost more tokens per word than English.
 -   **Tokenizers change between model generations.** Anthropic’s documentation states that newer model families use a newer tokenizer, and the same text can yield roughly 30% more tokens than on earlier models, depending on content. A model upgrade can therefore raise cost and consume context faster with no change to your prompt. Never reuse token counts measured against one model to plan for another.
 -   **Models are weak at character-level tasks.** Counting letters, reversing strings, or exact-length constraints (“exactly 140 characters”) are unreliable because the model operates on tokens, not letters. Verify such constraints in code.
 
@@ -115,6 +115,7 @@ def ask(client, user_text):
         messages=history,          # the whole conversation, every call
     )
     if resp.stop_reason != "end_turn":
+        history.pop()              # drop the unanswered turn so history stays valid
         raise RuntimeError(f"unexpected stop: {resp.stop_reason}")
     history.append({"role": "assistant", "content": resp.content})
     return resp
@@ -123,7 +124,7 @@ def ask(client, user_text):
 Implications:
 
 -   **Cost and latency grow with conversation length.** Turn 30 re-sends turns 1 through 29 as input. Prompt caching (cache reads priced at a small fraction of base input, with a default five-minute lifetime refreshed on use) and trimming strategies exist because of this.
--   **Caching is prefix-based.** The prefix order is tools, then system, then messages, and a change at one level invalidates it and everything after. Put stable content first and volatile content (timestamps, per-user data) last, or the cache never hits. Some models need a minimum prefix length (between 512 and 4,096 tokens depending on the model) before caching applies, and shorter prompts are simply processed uncached with no error.
+-   **Caching is prefix-based.** The prefix order is tools, then system, then messages. A change anywhere invalidates the cache from that point on: a changed tool definition invalidates everything, a changed system prompt invalidates the system prompt and the messages, and a changed message invalidates only the messages from there onward. Put stable content first and volatile content (timestamps, per-user data) last, or the cache never hits. Each model has a minimum cacheable prefix length (between 512 and 4,096 tokens depending on the model); a shorter prompt is simply processed uncached, with no error.
 -   **You own the state.** Storage, truncation, summarization, and per-user isolation of history are your responsibilities. Mixing two users’ histories in one array is a data leak you created, not a model behavior.
 -   **“The model forgot” is almost always a missing message.** Before blaming the model, log the exact payload you sent.
 -   Messages alternate between `user` and `assistant` roles, and tool results travel back as user-role content blocks. The `usage` field in each response reports input, output, and cache token counts, which is your ground truth for metering.

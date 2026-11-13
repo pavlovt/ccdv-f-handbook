@@ -86,7 +86,9 @@ The fingerprint is the part worth copying. During a cache-miss investigation you
 
 ### Circuit breaking on the right signal
 
-A breaker that counts all failures equally is worse than no breaker. A 400 from a malformed tool schema is a deterministic bug in one code path, and tripping on it takes down every other feature sharing the model. The signal you want is *capacity* failure: 529, 500, connection resets, read timeouts. Rate limiting is a third category — a 429 means *slow down*, a scheduling instruction rather than a health signal, and belongs in the limiter.
+A circuit breaker is a switch in your client that protects a struggling dependency, and your own service, from a pile-up of doomed requests. While things are healthy it is *closed* and requests flow. When failures cross a threshold within a short window, it *opens*: for a cooling-off period every call fails fast in your own code, without being sent. Then it lets a single trial request through (*half-open*); if that succeeds it closes again, and if not it stays open for another period.
+
+The design question is which failures count. A breaker that counts all failures equally is worse than no breaker. A 400 from a malformed tool schema is a deterministic bug in one code path, and tripping on it takes down every other feature sharing the model. The signal you want is *capacity* failure: 529, 500, connection resets, read timeouts. Rate limiting is a third category — a 429 means *slow down*, a scheduling instruction rather than a health signal, and belongs in the limiter.
 
 ``` {.sourceCode .python}
 import threading
@@ -154,6 +156,8 @@ Volume I told you what a breakpoint is. It did not tell you when writing one los
 
 ### Break-even in number of requests
 
+Caching is a trade. The first request that writes the cache pays *more* than an uncached request (the write multiplier), and every later request that reads it pays much *less*. Break-even is the point where the savings on the reads have paid back the extra cost of the write. Below it, caching loses money; above it, every further hit is profit.
+
 Suppose a prefix of *T* tokens is reused by *N* requests, and every request after the first hits the cache. Write *w* for the write multiplier and *r* for the read multiplier.
 
 -   Uncached cost: *N · T · P*
@@ -197,7 +201,7 @@ Uncached input tokens: Σ(40,000 + 300*k*) for *k* = 1…12 = 480,000 + 23,400 =
 Cached, with one breakpoint at the end of the 40,000-token prefix:
 
 -   Turn 1: write 40,000 at 1.25× → 50,000 billable-equivalent tokens, plus 300 uncached. (An equivalent token is one token billed at the base input price, so 40,000 tokens at 1.25× cost the same as 50,000 plain input tokens. Converting every category to this unit lets you add them up.)
--   Turns 2–12: read 40,000 at 0.05× → 2,000 equivalent each, 22,000 in total, plus 23,100 uncached tail tokens.
+-   Turns 2–12: read 40,000 at 0.05× → 2,000 equivalent each, 22,000 in total, plus 23,100 uncached tail tokens. (The *tail* is the conversation after the cached prefix. On turn *k* it is 300*k* tokens, and because the breakpoint sits at the end of the prefix, all of it is billed at the plain input rate: 300 × (2 + 3 + … + 12) = 23,100.)
 -   Total: 50,000 + 22,000 + 23,400 = **95,400 equivalent tokens**, or **\$0.1908**.
 
 An **81% reduction in input spend**. Notice where the remaining cost sits: 23,400 of the 95,400 equivalent tokens — a quarter of the bill — is the growing uncached tail. A second breakpoint, advanced every few turns, converts most of that into reads, and is usually the highest-return change available once the first breakpoint exists.
@@ -222,7 +226,7 @@ That leaves a fourth breakpoint for the sliding history window. The ordering is 
 
 The privacy question is sharper than it looks. Caching requires a 100% identical prefix including images, and entries hold key-value representations and hashes in memory, never raw prompts. That is a strong guarantee *given correct scoping*, and scoping is the part you own. The rule to enforce in code: **a cache breakpoint must never sit after content belonging to more than one tenant.** If your prefix assembly can interleave tenants, the bug is in the assembly, and caching merely makes it cheaper to repeat.
 
-Where regulatory isolation is required rather than merely desirable, use separate workspaces per tenant and accept the consequence: the global prefix is cached once per workspace, not once globally. With a 6,000-token global prefix and 400 tenants, that is 6,000 × 400 × 1.25 = 3,000,000 equivalent tokens per cold start — \$6.00 on Sonnet 5.5, or \$75.00 on Fable 5.1 at \$10/MTok.
+Where regulatory isolation is required rather than merely desirable, use separate workspaces per tenant and accept the consequence: the global prefix is cached once per workspace, not once globally. With a 6,000-token global prefix and 400 tenants, that is 6,000 × 400 × 1.25 = 3,000,000 equivalent tokens per cold start — \$6.00 on Sonnet 5.5, or \$30.00 on Fable 5.1 at \$10/MTok.
 
 ### Pre-warming, concurrency, and the ordering constraint
 
@@ -338,7 +342,7 @@ Two refinements. Streaming is the correct answer for *long single generations ev
 
 ## 1.4 Rate-limit engineering
 
-Three limits apply per model class: RPM, ITPM, OTPM. All are enforced with a token bucket that replenishes *continuously*, not a counter that resets on the minute. Four consequences follow, and most client-side limiters get at least two wrong.
+Three limits apply per model class: RPM, ITPM, OTPM. All are enforced with a token bucket that replenishes *continuously*, not a counter that resets on the minute. Picture a bucket with a fixed capacity that is topped up at a steady trickle. Each request takes its cost out of the bucket; if there is not enough left, the request is rejected with a 429 until the trickle has refilled it. A limit of 60 RPM therefore means “about one request’s worth of capacity arrives every second,” not “60 requests are handed out at the start of each minute.” Four consequences follow, and most client-side limiters get at least two wrong.
 
 **A per-minute average does not protect you.** Capacity is refilled smoothly, so 60 RPM behaves much like one request per second. Firing all sixty at the top of the minute will 429 even though your minutely average is exactly at the limit. A limiter must shape the instantaneous rate, not the minutely total.
 
@@ -454,7 +458,7 @@ Spend-cap 429s are a different animal and must not be retried. They arrive with 
 
 ## 1.5 Partial failure in a fan-out
 
-A fan-out over *n* items is the most common production shape and the most commonly mishandled, because “retry the failures” is not a policy. Four rules.
+A fan-out is one logical operation split into many independent model calls that run in parallel: extracting fields from 100 invoices, or asking 45 questions of one contract. Some of those calls will fail while the rest succeed, and the question is what the operation as a whole should then do. A fan-out over *n* items is the most common production shape and the most commonly mishandled, because “retry the failures” is not a policy. Four rules.
 
 **Classify before you retry.** A 400 on item 37 will 400 forever. Retrying it consumes capacity that successful items need and delays the whole operation. Partition outcomes into *permanent*, *transient*, and *throttled*, and treat only the last two as retryable — with different backoff, since a throttled item is waiting on a bucket and a transient one is waiting on a server.
 
@@ -601,15 +605,15 @@ The whole chapter in one system. A legal-tech product ingests contract bundles o
 
 The middle row is the interesting one: a bundle estimated at 97,000 tokens whose true count is 101,000 costs 5× what you projected. The margin exists because estimates are estimates.
 
-**Stage 3 — Warm, then fan out.** Per bundle: one pre-warm request with a one-hour breakpoint on the document prefix, awaited to completion, then the 45 questions as a batch. One hour rather than five minutes because break-even is a 51% hit rate and we expect 45 of 46 to hit, while arbitrary batch ordering makes a five-minute window genuinely risky.
+**Stage 3 — Warm, then fan out.** Each bundle needs 46 requests over the same document prefix: the structured summary and the 45 questions. The summary request goes first, as an ordinary synchronous call with a one-hour breakpoint on the document prefix, so it produces the summary and warms the cache at the same time. Once it completes, the 45 questions go as a batch. One hour rather than five minutes because break-even is a 51% hit rate and we expect 45 of 46 to hit, while arbitrary batch ordering makes a five-minute window genuinely risky.
 
 Arithmetic for one 200,000-token bundle on Sonnet 5.5:
 
 -   Naive, no cache, no batch: 46 × 200,000 × \$2/MTok = **\$18.40**
 -   One-hour cache, no batch: (200,000 × 2.0 + 45 × 200,000 × 0.05) × \$2/MTok = (400,000 + 450,000) × \$2/MTok = **\$1.70**
--   One-hour cache plus batch: **\$0.85**
+-   One-hour cache plus batch: the warming write is synchronous, so it stays at full price (400,000 × \$2/MTok = \$0.80), and only the 45 batched reads are halved (450,000 × \$2/MTok × 0.5 = \$0.45), for **\$1.25**
 
-A 21.6× reduction, of which 10.8× is caching and 2× batching. Across 800 bundles a day that is \$14,720 against \$680 — \$5.4 million a year against \$248,000, running every day. The arithmetic is not an optional appendix.
+About a 14.7× reduction, of which 10.8× is caching and a further 1.36× is batching (the batch discount applies only to the reads, because the write happened outside the batch). Across 800 bundles a day that is \$14,720 against \$1,000 — \$5.4 million a year against \$365,000, running every day. The arithmetic is not an optional appendix.
 
 **Stage 4 — Interactive path.** The same cached prefix serves the interactive feature, but synchronously and streamed, because a human is waiting. Two consequences: the interactive path must never warm a cold prefix, since it would pay a 200,000-token write while the user waits; and it must use the *same* model, effort, tool list and `output_config.format` as the batch path, or it misses. Against a cold bundle, serve uncached and warm asynchronously — paying 1× once beats making the user wait for a write.
 
@@ -637,7 +641,7 @@ A 21.6× reduction, of which 10.8× is caching and 2× batching. Across 800 bund
 
 That `cache_miss_reason` row deserves a note, being the newest and most useful debugging surface here. Pass `diagnostics: {"previous_message_id": <previous response id>}` on each turn and the API compares request fingerprints and names *where* two consecutive requests diverged: `model_changed`, `system_changed`, `tools_changed`, `messages_changed`, or the two non-answers `previous_message_not_found` and `unavailable`. The `*_changed` variants carry `cache_missed_input_tokens`, an estimate of lost cacheable prefix derived from byte lengths — a magnitude, not a billing figure. Only the *earliest* divergence is reported, so fix them one at a time. Combine it with `usage.cache_read_input_tokens`: diagnostics answers “did my request change?”, usage answers “did the cache hit?”, and only together do they distinguish a prefix-assembly bug from an expired entry.
 
-Every individual decision above is unremarkable. What makes the pipeline work is that each one was made with a number attached — a break-even hit rate, a 100,000-token threshold, a 51% requirement, a 21.6× total — rather than with an adjective. That habit is the actual subject of this chapter.
+Every individual decision above is unremarkable. What makes the pipeline work is that each one was made with a number attached — a break-even hit rate, a 100,000-token threshold, a 51% requirement, a 14.7× total — rather than with an adjective. That habit is the actual subject of this chapter.
 
 ## Practice Questions
 

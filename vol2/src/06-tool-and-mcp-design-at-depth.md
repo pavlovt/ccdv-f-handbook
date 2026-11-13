@@ -425,7 +425,11 @@ MCP is how you make a tool surface reusable across hosts instead of embedded in 
 
 ### The stateless revision
 
-The 2026-07-28 revision removed protocol-level state, and this is the change that most affects server architecture. The specifics:
+The 2026-07-28 revision removed protocol-level state, and this is the change that most affects server architecture.
+
+In plain terms: earlier versions of MCP worked like a phone call. The client dialled in, the two sides introduced themselves once (the `initialize` handshake), and the server then remembered who it was talking to for the rest of the connection, under a session ID. That memory tied each client to one server process, which made servers hard to run behind a load balancer and fragile when a connection dropped. The current revision works like a series of letters instead. Every request carries everything the server needs to understand it — the protocol version, the client’s capabilities, who is asking — so any server process can answer any request, and nothing is lost when a connection breaks, because there was no conversation state to lose. Anything that genuinely has to persist between calls is now your tool’s job: you hand the client an explicit ID and it sends that ID back as an ordinary argument.
+
+The specifics:
 
 -   The `initialize` / `notifications/initialized` handshake is gone. Every request carries its own protocol version and client capabilities in `_meta`, under keys `io.modelcontextprotocol/protocolVersion` and `io.modelcontextprotocol/clientCapabilities`. Clients should identify themselves per request with `io.modelcontextprotocol/clientInfo`, and servers should identify themselves in each result’s `_meta` with `io.modelcontextprotocol/serverInfo`. A version mismatch returns `UnsupportedProtocolVersionError`.
 -   `server/discover` is new and **mandatory** for servers: it advertises supported protocol versions, capabilities and identity. Clients may call it up front for version selection, or use it as a compatibility probe on stdio.

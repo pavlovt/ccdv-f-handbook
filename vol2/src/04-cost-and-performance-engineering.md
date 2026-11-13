@@ -177,7 +177,7 @@ Let `c` be the fully-loaded cost of a single misroute. Total monthly cost of own
 
 Setting them equal: `240,000c = 16,629`, so `c* = $0.0693`.
 
-**If a single misclassification costs more than about seven cents to clean up, Sonnet is cheaper than Haiku.** Seven cents is five seconds of an agent’s time. If the misroute triggers an automatic retry on a cheap path, `c ≈ $0.02` and Haiku wins comfortably (\$10,603 vs \$22,432). If a human has to move the ticket, `c` is north of a dollar and Sonnet beats Haiku by roughly \$700,000 a month.
+**If a single misclassification costs more than about seven cents to clean up, Sonnet is cheaper than Haiku.** Seven cents is five seconds of an agent’s time. If the misroute triggers an automatic retry on a cheap path, `c ≈ $0.02` and Haiku wins comfortably (\$10,603 vs \$22,432). If a human has to move the ticket, `c` is a dollar or more, and at exactly \$1 Sonnet already beats Haiku by about \$223,000 a month (`240,000 × $1 − $16,629`); at \$3 the gap is about \$700,000.
 
 This is the single most important discipline in this chapter: **the inference bill is often not the dominant term.** Model your error cost before you model your token cost, because at high volume the error term has a multiplier of eight million on it and the token term has the same multiplier but a much smaller coefficient. We will come back to Case A in §3.6 and find a third option that beats both.
 
@@ -399,7 +399,7 @@ Expect saturation. A typical shape on a well-specified extraction task is `low` 
 
 ## 3.6 Cascades and routing, worked numerically
 
-The cheap-model-with-escalation pattern was introduced in Volume I. Here is when it actually pays.
+A *cascade* sends every request to a cheap model first and passes on (*escalates*) only the requests it cannot handle well to an expensive model. The decision to escalate is made by a *gate*: a schema check, a validator, or a confidence signal. Volume I introduced the pattern. Here is when it actually pays.
 
 ### Break-even escalation fraction
 
@@ -559,7 +559,7 @@ In this section `prefill` means the time the model spends processing the prompt 
 
 Streaming changes **when the user sees the first token.** It does not change total time, does not change token count, and does not change cost. It converts a dead wait into progressive disclosure, which is a genuine and large improvement in perceived latency and no improvement at all in measured latency.
 
-It therefore fixes nothing for a non-interactive consumer. If a downstream service must parse a complete JSON object before acting, streaming buys exactly zero — the last token arrives at the same moment either way. Teams add streaming to backend pipelines and are then baffled that p99 did not move. Streaming is a UX lever: use it where a human is reading, and reach for prefill or output reduction everywhere else.
+It therefore fixes nothing for a non-interactive consumer. If a downstream service must parse a complete JSON object before acting, streaming buys exactly zero — the last token arrives at the same moment either way. Teams add streaming to backend pipelines and are then baffled that p99 did not move. Streaming is a UX lever: use it where a human is reading, and everywhere else reduce prompt-processing time (shorter or cached prompts) or output length.
 
 It has one hard engineering benefit: it makes long generations observable, so you can detect a stall and abort instead of discovering at a 10-minute timeout that you paid for 100,000 tokens you will discard. For outputs near the 128K ceiling that alone makes it close to mandatory.
 
@@ -624,7 +624,9 @@ To detect a difference between two models you need enough items. For two indepen
 
 **About 370 items per arm** for an independent comparison of 94% versus 97%. Teams routinely try this with 50 and declare a winner.
 
-But you should not run independent arms. **Run both models on the same items** and use a paired test, which is far more efficient because only the items where the models disagree carry information. With 400 paired items, suppose the candidate is right where the incumbent is wrong on 18 items and wrong where the incumbent is right on 6. McNemar’s test:
+But you should not run independent arms. **Run both models on the same items** and use a paired test, which is far more efficient because only the items where the models disagree carry information. If both models get an item right, or both get it wrong, that item says nothing about which model is better. The evidence is entirely in the *discordant* items: the ones the candidate gets right and the incumbent gets wrong, and the reverse. If the two models were really equally good, those two counts would be roughly equal, the way heads and tails come out roughly equal over many coin tosses. McNemar’s test asks whether the split between them is too lopsided to be chance. Its statistic is `(|b − c| − 1)² / (b + c)`, where `b` and `c` are the two discordant counts, and a value above 3.841 means the split would happen by chance less than 5% of the time.
+
+With 400 paired items, suppose the candidate is right where the incumbent is wrong on 18 items and wrong where the incumbent is right on 6. McNemar’s test:
 
     χ² = (|18 − 6| − 1)² / (18 + 6) = 11² / 24 = 121/24 = 5.04   →  p ≈ 0.025
 

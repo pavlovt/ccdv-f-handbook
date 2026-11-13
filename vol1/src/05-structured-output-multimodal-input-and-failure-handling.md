@@ -139,7 +139,7 @@ For HIPAA-regulated work, structured outputs are HIPAA eligible, but the schema 
 
 ## Tool Use as a Structured Output Mechanism
 
-Before constrained output existed, the standard technique for reliable JSON was to define a tool whose `input_schema` was your target shape, force the model to call it, and read the arguments without ever executing anything. It remains relevant: it works on every model, it is how you get structured *tool arguments* rather than a structured final answer, and a large amount of existing code does it.
+Before constrained output existed, the standard technique for reliable JSON was to define a tool whose `input_schema` was your target shape, force the model to call it, and read the arguments without ever executing anything. It remains relevant: it works on older models that lack constrained output, it is how you get structured *tool arguments* rather than a structured final answer, and a large amount of existing code does it. One version caveat: forcing a tool (`tool_choice` of `any` or `tool`) returns a 400 on Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1, so the example below targets Haiku 5.5. On those four models, use `output_config.format`, or keep `tool_choice` at `auto` with a `strict: true` tool and tell the model in the prompt to call it.
 
 ``` {.sourceCode .python}
 tools = [{
@@ -159,7 +159,7 @@ tools = [{
 }]
 
 response = client.messages.create(
-    model="claude-sonnet-5-5",
+    model="claude-haiku-5-5",         # forced tool_choice is rejected on Sonnet 5.5
     max_tokens=1024,
     tools=tools,
     tool_choice={"type": "tool", "name": "record_ticket"},
@@ -286,7 +286,7 @@ Images are tokenized as patches, with each 28×28 pixel patch costing one visual
 
 A 1000×1000 image is therefore 36 × 36 = 1,296 tokens.
 
-Images larger than the model’s maximum long edge are **downscaled** before processing, preserving aspect ratio. There are two tiers:
+Images that exceed the model’s maximum long edge *or* its maximum visual-token count are **downscaled** before processing, preserving aspect ratio, until both limits are met. There are two tiers:
 
   Tier              Models          Max long edge   Max visual tokens
   ----------------- --------------- --------------- -------------------
@@ -302,6 +302,8 @@ Consequences of downscaling:
   1000 × 1000   unchanged, 1296 tokens      unchanged, 1296 tokens
   1920 × 1080   1456 × 819, \~1560 tokens   unchanged, \~2691 tokens
   3840 × 2160   1456 × 819, \~1560 tokens   2576 × 1449, \~4784 tokens
+
+Note why the 1920 × 1080 image ends up 1456 px wide on the standard tier, below the 1568-px long-edge limit. At 1568 × 882 it would need 56 × 32 = 1,792 tokens, over the \~1568-token cap, so the token limit is the one that binds and the image shrinks further. For wide or tall images the token cap, not the long edge, usually decides the final size.
 
 Uploading a 4K screenshot to a standard-tier model buys you nothing: it is downscaled to about 1456 px wide, so you paid the bandwidth and got 1456-px detail. Pre-resize to the tier’s limit for identical results at a fraction of the payload.
 
@@ -512,7 +514,7 @@ When you implement it yourself, the required elements are exponential backoff **
 ``` {.sourceCode .python}
 import random, time, anthropic
 
-RETRYABLE = (429, 500, 502, 503, 504, 529)
+RETRYABLE = (408, 409, 429, 500, 502, 503, 504, 529)
 
 def call_with_backoff(fn, *, attempts=5, base=1.0, cap=60.0):
     for n in range(attempts):

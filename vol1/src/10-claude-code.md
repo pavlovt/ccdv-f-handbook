@@ -4,7 +4,7 @@ Claude Code is Anthropic’s agentic coding tool. This chapter is short because 
 
 ## What Claude Code Is, and What It Is Not
 
-Claude Code reads your codebase, edits files, runs commands, and integrates with development tools, working through an agent loop of the kind described in Chapter 9. It uses built-in tools (file read, edit, search, shell) and any MCP servers you connect, and it asks permission before doing risky things.
+Claude Code reads your codebase, edits files, runs commands, and integrates with development tools, working through an agent loop of the kind described in Chapter 7. It uses built-in tools (file read, edit, search, shell) and any MCP servers you connect, and it asks permission before doing risky things.
 
   -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
                     Messages API                            claude.ai chat                Claude Code

@@ -251,7 +251,7 @@ In a shared deployment, the tenant boundary is a data-access boundary and must b
 
   Context                             Build each request’s context from scratch for one tenant. No shared conversation state.
 
-  Caching                             Include tenant in cache keys; do not share cached completions or embeddings across tenants unless the content is public.
+  Caching                             In your own response and embedding caches, include the tenant in the cache key; do not share cached completions or embeddings across tenants unless the content is public.
 
   Memory features                     Scope stored memory per user and per tenant, and let users inspect and delete it.
 

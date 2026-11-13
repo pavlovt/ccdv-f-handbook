@@ -104,7 +104,7 @@ Every Claude request bills tokens in categories priced differently. Reasoning ab
   Haiku 5.5 (≤100K)   \$0.10      \$0.50      \$0.125          \$0.20           \$0.01
   ------------------------------------------------------------------------------------------
 
-On Opus 5.5 a cached input token costs \$0.20 per million against \$4.00 uncached — a 20x reduction. For an agent that re-sends a large system prompt and tool schema on every one of thirty turns, caching is not an optimization, it is the difference between viable and not. Caching requires a minimum prompt length, which for all four current models is 512 tokens; shorter prompts are processed uncached with no error raised. You get up to four explicit `cache_control` breakpoints per request, cache reads look back up to 20 blocks for a prior write, and the invalidation hierarchy runs tools → system → messages, so a change at one level invalidates everything after it.
+On Opus 5.5 a cached input token costs \$0.20 per million against \$4.00 uncached — a 20x reduction. For an agent that re-sends a large system prompt and tool schema on every one of thirty turns, caching is not an optimization, it is the difference between viable and not. Caching requires a minimum prompt length, which for all four current models is 512 tokens; shorter prompts are processed uncached with no error raised. You get up to four explicit `cache_control` breakpoints per request, cache reads look back up to 20 positions for a prior write, and the invalidation hierarchy runs tools → system → messages, so a change at one level invalidates everything after it (Chapter 4 has the full table).
 
 **Batch tokens** are 50% off both input and output. The Message Batches API accepts up to 100,000 requests or 256 MB per batch, most batches complete within an hour (not guaranteed), and anything unfinished at 24 hours expires. Results stay downloadable for 29 days from creation. Streaming, Fast mode, and `max_tokens: 0` cache pre-warming are rejected. Batch and caching discounts stack.
 
@@ -150,7 +150,7 @@ Several properties of effort have direct engineering consequences.
 
 **Thinking tokens bill as output tokens, and they also bill as input later.** On Opus 4.5 and all models 4.6 and above, prior turns’ thinking blocks stay in context and are billed as input on subsequent turns. Sonnet 4.5, Haiku 4.5, and earlier strip them. On a long agent run with a model that preserves thinking, reasoning from turn 3 is still being paid for at turn 30. Read `usage.output_tokens_details.thinking_tokens` to see what reasoning actually costs you; `output_tokens` remains the authoritative billing total.
 
-**Changing effort invalidates the prompt cache,** because the resolved effort value is rendered into the prompt. Setting it explicitly to the model’s default is equivalent to omitting it and does not break the cache. Keep effort constant for the life of a cached conversation; where you need a one-off change, there is a per-message effort beta on supported models.
+**Changing effort invalidates the prompt cache** from the messages onward (the tools and system entries survive), because the resolved effort value is rendered into the prompt. Setting it explicitly to the model’s default is equivalent to omitting it and does not break the cache. Keep effort constant for the life of a cached conversation; where you need a one-off change, there is a per-message effort beta on supported models.
 
 **Thinking decays as conversations grow.** In tool-use loops, follow-up requests that merely process a tool result often skip thinking entirely, even at `xhigh` or `max`. Do not budget as though every turn in a thirty-turn agent run will think at full depth.
 
@@ -246,7 +246,7 @@ Token prices are the input to a cost model, not the cost model. The number that 
 
 Four factors drive the wedge:
 
-**Retries.** A model that fails validation 30% of the time costs 1.3x its nominal price before you count the escalation.
+**Retries.** A model that fails validation 30% of the time costs about 1.3x its nominal price per completed task if each failure is retried once and the retry succeeds. If retries can fail at the same rate, the expected number of attempts is 1 / 0.7, about 1.43x. Escalation to a dearer model comes on top of that.
 
 **Output verbosity and thinking.** Output is 5x input. A model that reasons for 2,000 tokens before a 200-token answer bills 2,200 output tokens. That is 11x the 200 tokens billed by a model that answers directly, at the same nominal rate.
 

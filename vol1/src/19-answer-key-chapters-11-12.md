@@ -18,7 +18,7 @@
 
 **Q11.8 — B.** Filtering in the retrieval query with the session’s tenant ID keeps other tenants’ data out of the context entirely. Options A, C and D all leave foreign data in the context and rely on the model to ignore it, which is the original flaw.
 
-**Q11.9 — D.** Model output is untrusted, so constrain it to enumerated commands and allowlisted targets and avoid shell interpretation by using argument arrays. Option A asks the model to sanitize, which is not enforcement, and D detects abuse only after it has happened.
+**Q11.9 — D.** Model output is untrusted, so constrain it to enumerated commands and allowlisted targets and avoid shell interpretation by using argument arrays. Option A asks the model to sanitize, which is not enforcement, and B detects abuse only after it has happened.
 
 **Q11.10 — A.** A refusal from the screening model signals the input is harmful, so it should count as a failed screen and return your fixed response. Retrying (C) or passing through (B, D) lets exactly the inputs you meant to block reach the main model.
 
@@ -28,9 +28,9 @@
 
 **Q11.13 — A.** Untrusted content belongs in a tool result, delimited, with the system prompt stating its status and your own instructions kept outside the result. Placing it in the system prompt (B) elevates attacker text to the highest authority.
 
-**Q11.14 — C.** Image-based exfiltration is closed by controlling rendering in code, for example by allowlisting or proxying image hosts. Option A is tempting but a manipulated model will ignore it; C and D have no bearing on the channel.
+**Q11.14 — C.** Image-based exfiltration is closed by controlling rendering in code, for example by allowlisting or proxying image hosts. Option A is tempting but a manipulated model will ignore it; B and D have no bearing on the channel.
 
-**Q11.15 — B.** A database role without billing access still holds if the model is fully compromised, which is the test for a real control. Options A and D rely on model behavior, and B is a probabilistic detector that misses some cases.
+**Q11.15 — B.** A database role without billing access still holds if the model is fully compromised, which is the test for a real control. Options A and D rely on model behavior, and C is a probabilistic detector that misses some cases.
 
 ## Chapter 12
 

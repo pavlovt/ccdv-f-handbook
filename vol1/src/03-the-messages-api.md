@@ -34,7 +34,7 @@ Three headers matter on every call:
   `anthropic-beta`        No                      Opts into beta features. Comma-separated when you need more than one.
   ------------------------------------------------------------------------------------------------------------------------------------------------------
 
-A successful call returns HTTP 200 and a `Message` object. The shape is stable and worth memorizing, because almost all defensive coding you write keys off two of its fields.
+A successful call returns HTTP 200 and a `Message` object. The shape is stable and worth memorizing, because almost all defensive coding you write keys off two of its fields: `content` and `stop_reason`.
 
 ``` {.sourceCode .json}
 {

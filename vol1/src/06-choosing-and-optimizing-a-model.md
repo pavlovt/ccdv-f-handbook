@@ -80,7 +80,7 @@ A 1M-token context window is an invitation to a specific mistake: stuffing every
   ≤ 100K tokens           \$0.10   \$0.50   \$0.125          \$0.01
   \> 100K tokens          \$0.50   \$2.50   \$0.625          \$0.05
 
-Three details make this trap easy to fall into. The threshold counts *all* input tokens, cache reads and cache writes included. Pricing is per request, so a request that crosses the line pays the higher rate on its entire prompt even if most of that prompt was a cache hit. And crossing the threshold is a 5x jump — a 101K-token Haiku request costs more than a 101K-token request did at the cheap tier by a factor of five, which can erase the entire reason you chose Haiku. If you run Haiku against large documents, measure your prompt size distribution and know what fraction of traffic lands above 100K.
+Three details make this trap easy to fall into. The threshold counts *all* input tokens, cache reads and cache writes included. Pricing is per request, so a request that crosses the line pays the higher rate on its entire prompt even if most of that prompt was a cache hit. And crossing the threshold is a 5x jump. A 100K-token prompt costs \$0.01 in input; a 101K-token prompt costs about \$0.05, because all 101K tokens are billed at the higher rate, not just the extra thousand. That can erase the entire reason you chose Haiku. If you run Haiku against large documents, measure your prompt size distribution and know what fraction of traffic lands above 100K.
 
 **Third, long contexts cost latency and attention, not just money.** Time to first token scales with prompt size. And a model asked to find one relevant clause in 800K tokens of boilerplate is doing a harder task than one handed the three relevant clauses. Retrieval that narrows 800K tokens to 20K usually improves both cost and quality. The 1M window is best understood as headroom for agent runs that genuinely accumulate state, not as a substitute for retrieval.
 
@@ -206,7 +206,7 @@ The highest-leverage cost optimization in most Claude applications is not pickin
 
 Three routing patterns, in increasing order of cost and capability.
 
-**Escalate on validation failure.** The cheap model attempts the task; a programmatic check decides whether the answer is acceptable; failures go to the expensive model. This works beautifully when correctness is machine-checkable — JSON that must parse against a schema, code that must compile, arithmetic that must reconcile, an extracted value that must appear in the source. You pay the cheap price on the pass rate and a combined price on the failure rate. At a 90% pass rate with Haiku primary and Opus fallback, your blended input cost is roughly \$0.09 + \$0.40 per million, against \$4.00 for Opus everywhere.
+**Escalate on validation failure.** The cheap model attempts the task; a programmatic check decides whether the answer is acceptable; failures go to the expensive model. This works beautifully when correctness is machine-checkable — JSON that must parse against a schema, code that must compile, arithmetic that must reconcile, an extracted value that must appear in the source. Requests that pass pay only the cheap price; requests that fail pay the cheap price and then the expensive one. At a 90% pass rate with Haiku primary and Opus fallback, nine requests in ten cost \$0.10 per million input tokens and one in ten costs \$0.10 + \$4.00. The blended input cost is 0.9 × \$0.10 + 0.1 × \$4.10, roughly \$0.09 + \$0.41 = \$0.50 per million, against \$4.00 for Opus everywhere.
 
 **Escalate on self-reported uncertainty.** Ask the cheap model to classify difficulty or flag low confidence alongside its answer, and route on that. Cheaper to implement than a separate classifier but less reliable, because small models are imperfectly calibrated. Measure the false-confident rate before trusting it.
 
@@ -248,7 +248,7 @@ Four factors drive the wedge:
 
 **Retries.** A model that fails validation 30% of the time costs 1.3x its nominal price before you count the escalation.
 
-**Output verbosity and thinking.** Output is 5x input. A model that reasons for 2,000 tokens before a 200-token answer costs about 11x a model that answers directly, on the output side, at the same nominal rate.
+**Output verbosity and thinking.** Output is 5x input. A model that reasons for 2,000 tokens before a 200-token answer bills 2,200 output tokens. That is 11x the 200 tokens billed by a model that answers directly, at the same nominal rate.
 
 **Turn count on agent tasks.** This dominates everything else. A more capable model that completes a task in 8 turns can be cheaper in absolute terms than a weaker model that takes 25 turns, because every turn resends the accumulated conversation. The expensive model’s higher per-token rate is multiplied by far fewer tokens.
 

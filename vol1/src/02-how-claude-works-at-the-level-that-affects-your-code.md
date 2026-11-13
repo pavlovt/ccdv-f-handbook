@@ -47,7 +47,7 @@ Think of the window as `input + output <= window`, where “output” includes t
 
 1.  `max_tokens` is a cap on output, and thinking tokens count inside it. If you enable thinking and set `max_tokens` sized for a short answer, the thinking can consume the allowance and leave nothing, or too little, for the visible answer. The response then ends with `stop_reason: "max_tokens"`.
 2.  Thinking tokens are billed as output tokens even if you only see a summary or nothing at all. Hiding thinking from the response changes visibility, not cost.
-3.  Whether previous turns’ thinking stays in the window depends on the model. Per the documentation, newer models keep prior thinking blocks (and they count toward the window and are billed as input on later turns), while older models strip them automatically. When you return tool results during a thinking turn, you must pass the thinking block back unmodified, including its signature, or the API returns an error.
+3.  Whether previous turns’ thinking stays in the window depends on the model. Per the documentation, newer models keep prior thinking blocks: the old blocks take up space in the window and are billed as input on every later turn. Older models strip them automatically. A separate rule covers tool use: when you return tool results in the middle of a turn that used thinking, you must pass the thinking block back unmodified, including its signature, or the API returns an error.
 
 ### What happens when you exceed it
 

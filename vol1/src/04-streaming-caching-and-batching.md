@@ -55,7 +55,7 @@ An abbreviated real stream:
     event: message_stop
     data: {"type":"message_stop"}
 
-Note the `index`. Blocks do not necessarily arrive one at a time in a single-block response, and in a multi-block response (text, then a tool call, then more text) the index is how you route a delta to the right accumulator. Never assume a delta belongs to the block you most recently saw start.
+Note the `index`. This example has a single block, so every delta carries index 0. A response with several blocks (text, then a tool call, then more text) gives each block its own index, and the index on a delta tells you which block it extends. Route every delta to its accumulator by index; never assume a delta belongs to the block you most recently saw start.
 
 ## Delta Types
 
@@ -310,7 +310,7 @@ Cacheable:
 
 Not cacheable:
 
--   Thinking blocks cannot take `cache_control` directly. They are cached as part of a prior assistant turn, and count as input tokens when read.
+-   Thinking blocks cannot carry a `cache_control` marker themselves. They are still cached when they sit inside an earlier assistant turn that falls within a cached prefix, and they count as input tokens when read from it.
 -   Sub-content such as individual citations — mark the containing document block instead.
 -   Empty text blocks.
 
@@ -367,7 +367,9 @@ The 5-minute TTL is the default. The lifetime is measured **from the start of th
 
 The 1-hour TTL costs 2× to write instead of 1.25×, and is the right choice when reuse intervals fall between five minutes and an hour: periodic jobs, batch submissions, low-traffic endpoints.
 
-When mixing TTLs in one request, **1-hour breakpoints must appear before 5-minute breakpoints** in the prompt. Billing then follows a cascade: you pay a cache read for the tokens up to the highest hit, a 1-hour write for tokens from there to the highest 1-hour breakpoint, and a 5-minute write for the remainder to the last breakpoint.
+When mixing TTLs in one request, **1-hour breakpoints must appear before 5-minute breakpoints** in the prompt. Billing then follows a cascade, working from the start of the prompt: a cache read for everything up to the furthest point where an existing entry matched, a 1-hour write from there to the last 1-hour breakpoint, and a 5-minute write for the remainder up to the last breakpoint.
+
+For example, take a request with a 1-hour breakpoint at the end of a 50,000-token reference document and a 5-minute breakpoint at the end of the 10,000 tokens of conversation that follow it. On a cold cache nothing is read: the first 50,000 tokens are a 1-hour write and the next 10,000 a 5-minute write. Ten minutes later the 5-minute entry has expired but the 1-hour entry has not. Now the 50,000 document tokens are a cache read, there is no 1-hour write because the match already reaches the last 1-hour breakpoint, and the 10,000 conversation tokens are a 5-minute write again.
 
 There is no manual cache-clear operation. Entries expire through inactivity.
 
@@ -403,11 +405,13 @@ The asymmetry is the design guidance in disguise. Appending is cheap; editing an
 
 ## The Lookback Window
 
-Cache *writes* happen only at a marked breakpoint, and each writes one entry: a cumulative hash of the prefix up to that block.
+Cache *writes* happen only at a marked breakpoint, and each writes one entry, keyed by a hash of the whole prefix up to and including that block. Because the hash covers everything before the block, an entry can match only a request whose prefix is identical up to that point.
 
 Cache *reads* check the breakpoint’s own hash first. On a miss, the system walks backward, checking up to **20 positions** per breakpoint (the breakpoint itself counts as the first). A run of consecutive `tool_use` blocks, or of consecutive `tool_result` blocks, counts as a single position.
 
 This matters for growing conversations. If the breakpoint has drifted more than twenty positions past the last entry that was actually written, the lookback cannot reach it and you get a full miss on a conversation that should have been warm. The fix is to maintain a second, earlier breakpoint closer to the written entry, so there is something within range to find.
+
+For example, suppose the last request that wrote an entry had its marker at position 40, and the next request carries its marker at position 70 because the history has grown in between. The read checks position 70, then 69, and so on back to position 51. That is twenty positions, and the search stops there. The entry at position 40 is never reached, so the whole prefix is processed and written again at the write rate. A second breakpoint kept at position 40 would have been checked directly and would have hit.
 
 ## Concurrency and Pre-Warming
 

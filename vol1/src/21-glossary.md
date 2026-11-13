@@ -130,7 +130,7 @@
 
 **System prompt** — Instructions supplied separately from the conversation that set the model’s role, constraints, and context for the whole session. It is the right place for rules that should apply to every turn.
 
-**Temperature** — A sampling parameter that controls randomness. Lower values make output more deterministic, and the Claude API accepts values from 0 to 1.
+**Temperature** — A sampling parameter that controls randomness. Lower values make output more deterministic, and models before Claude 4.7 accept values from 0 to 1. On Claude 4.7 and later the parameter is deprecated and a non-default value returns a 400, although exam questions may still treat it as live.
 
 **Thinking block** — A response content block of type `thinking` with a `thinking` field (a summary of the reasoning, or an empty string under `display: "omitted"`) and an encrypted `signature`. It must be passed back unmodified during tool use. Safety-redacted reasoning arrives instead as a `redacted_thinking` block with an encrypted `data` field.
 

@@ -93,17 +93,19 @@ The SDK softens this. Its transformation step strips unsupported constraints, ap
 
 ### Complexity Limits
 
-Constrained decoding has hard ceilings, counted across all strict schemas in a single request:
+Constrained decoding has hard ceilings. They apply to every schema the API compiles into a grammar in a single request: the `output_config.format` schema, if there is one, and the `input_schema` of every tool marked `strict: true` (strict tools are covered in the next section). The first limit counts tool definitions; the other two count fields, summed across all of those schemas rather than per schema:
 
   -------------------------------------------------------------------------------------------
   Limit                               Value
   ----------------------------------- -------------------------------------------------------
-  Strict tools per request            20 (non-strict tools do not count)
+  Strict tools per request            20 tool definitions (non-strict tools do not count)
 
   Optional parameters, total          24 (anything not in `required`)
 
   Union-type parameters, total        16 (`anyOf`, or type arrays like `["string","null"]`)
   -------------------------------------------------------------------------------------------
+
+Required fields do not count toward the optional-parameter limit, but a required field whose type is a union (`anyOf`, or a type array such as `["string","null"]`) still counts toward the union-type limit; a Pydantic `Optional[str] = None` field is both optional and a union, so it counts against both. The budgets are shared, so 20 strict tools with two optional fields each is within the tool limit but spends 40 optional parameters against a budget of 24, and the request fails; a single strict tool with 24 optional fields is fine.
 
 Beyond these there is an internal grammar-size cap that produces a 400 reading *“Schema is too complex for compilation.”*, plus a 180-second compilation timeout as a backstop.
 
@@ -115,7 +117,7 @@ The remedies, in order of preference: mark only the critical tools `strict`; mak
 -   Constrained output adds a system prompt describing the format, which adds input tokens.
 -   Changing `output_config.format` **invalidates the prompt cache** for that thread. Do not vary the schema per request on a cached workload.
 -   Incompatible with citations (400 if both are enabled) and with message prefilling. Compatible with batching, streaming, and token counting.
--   Grammars apply only to the model’s direct output — not to tool arguments, tool results, or thinking. Grammar state resets between sections, so the model can reason freely and still emit constrained final output.
+-   The `output_config.format` grammar applies only to the model’s direct output — not to tool arguments (constrain those with `strict: true` on the tool), tool results, or thinking. The constraint is applied only while the final answer is being written. Thinking and tool calls that come before it in the same response are generated without it, so the model can reason freely and still emit constrained final output.
 
 ### Failure Modes That Still Exist
 

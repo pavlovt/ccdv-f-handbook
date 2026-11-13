@@ -224,10 +224,10 @@ Do not confuse this with `display: "omitted"`, which returns an ordinary `thinki
 
 **Round-tripping rules.** These are where integrations break:
 
-1.  **Within a tool-use turn, thinking blocks are mandatory.** When you return tool results, send back every `thinking` and `redacted_thinking` block from that assistant turn complete, unmodified, and in the original order, alongside the `tool_use` it accompanied. Editing, reordering, or dropping part of the sequence returns a 400. The only tolerated change is text placed in the empty field of an omitted block, which is ignored.
+1.  **Within a tool-use turn, thinking blocks are mandatory.** When you return tool results, send back every `thinking` and `redacted_thinking` block from that assistant turn complete, unmodified, and in the original order, alongside the `tool_use` it accompanied. Editing, reordering, or dropping part of the sequence returns a 400. There is one harmless exception: when a block came back with an empty `thinking` field because of `display: "omitted"`, any text you put into that field is ignored.
 2.  **Filtering by type is a trap.** Code that keeps only `block.type == "thinking"` silently drops `redacted_thinking` blocks and breaks the protocol. The safe pattern is to append `response.content` verbatim, as the history example later in this chapter does.
 3.  **Across turns, pass everything back.** Outside tool use, omitting earlier turns' thinking is allowed, but the recommended practice is to send it all and let the API filter it. Whether prior-turn blocks stay in context, and are billed as input, depends on the model (Chapter 6).
-4.  **Keep the history append-only.** On Claude 5.1 and later models, the API checks each block's signature against the model that produced it and against everything sent before it: the `system` prompt, `tools`, and earlier messages. A block that fails is not used. Editing earlier history therefore costs you the reasoning attached to every later turn, not just the turn you edited.
+4.  **Keep the history append-only.** On Claude 5.1 and later models, the API checks each block's signature against the model that produced it and against everything sent before it: the `system` prompt, `tools`, and earlier messages. If any of that has changed since the block was produced, the check fails and the API ignores the reasoning in that block. Add new turns at the end and leave everything already sent alone: editing an early message costs you the reasoning attached to every turn after the edit, not just the turn you edited.
 
 ## max\_tokens and Why It Is Required
 
@@ -315,7 +315,7 @@ Beware over-eager sequences. A stop sequence of `}` will terminate on the first 
 This is the single most consequential architectural fact in the chapter. It means:
 
 -   *You* own conversation persistence. Database, cache, or client-side — your choice, your problem.
--   Input token cost grows with conversation length, because you resend the whole history each turn. Cost per turn is roughly linear in turn count, so total cost over a conversation grows quadratically.
+-   Input token cost grows with conversation length, because you resend the whole history each turn. If every exchange adds about 500 tokens, turn 10 sends roughly 5,000 input tokens and turn 20 roughly 10,000. The cost of one turn grows in step with the turn number, so the total for the whole conversation grows with its square: twenty turns cost about four times as much as ten, not twice.
 -   Context window pressure accumulates. Eventually you must truncate, summarize, or window the history.
 -   Nothing stops you from *editing* the history. Turns you send need not be turns that actually happened.
 

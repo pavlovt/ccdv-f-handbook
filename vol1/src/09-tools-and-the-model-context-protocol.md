@@ -241,7 +241,7 @@ Use `tool` to force structured extraction: define a `record_invoice` tool whose 
 
 Details worth knowing for the exam and for production:
 
--   With `any` or `tool`, the assistant turn is prefilled, so the model emits no explanatory text before the `tool_use`. If you want prose alongside the call, use `auto` and instruct it in the prompt.
+-   With `any` or `tool`, the API starts the assistant turn for the model so that it opens directly with the tool call (the turn is prefilled). The model therefore emits no explanatory text before the `tool_use`. If you want prose alongside the call, use `auto` and instruct it in the prompt.
 -   Forcing a tool is incompatible with manual extended thinking (`thinking: {type: "enabled"}`); that combination returns an error. Adaptive thinking is allowed, but a forced call skips the thinking step.
 -   Documentation for the newest model generations states that some of them reject `any` and `tool` with a 400. Check the support matrix for the model you deploy. The portable alternative is `auto` with `strict: true` tools, or structured outputs when you only need a fixed JSON shape.
 -   Changing `tool_choice` between requests invalidates cached message blocks under prompt caching; tool definitions and the system prompt stay cached.
@@ -404,7 +404,7 @@ Do not build one just for the sake of it. An MCP server for a single in-process 
 
 ### Connecting MCP servers to Claude
 
-There are two distinct integration paths, and mixing them up is a common error.
+There are three integration paths, and mixing up the first two is a common error.
 
 **1. Your own application, via the Messages API MCP connector.** The API can connect to **remote** MCP servers for you, in beta (a `betas` header such as `mcp-client-2025-11-20`). You pass the server in `mcp_servers` and enable its tools with an `mcp_toolset` entry in `tools`:
 

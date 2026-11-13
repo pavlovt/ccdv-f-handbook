@@ -467,7 +467,7 @@ def extract_validated(client, model: str, body: dict, Model: type[pydantic.BaseM
     raise Invalid("exhausted", "validation did not converge")
 ```
 
-One operational note: each feedback round appends to the conversation, so the retried request is strictly larger and more expensive, with a different prefix beyond the breakpoint. Budget roughly 2.2× the single-call cost for one feedback round at a 20% failure rate, and alert if the rate climbs — a rising repair rate is usually a prompt or schema regression, not a model problem.
+One operational note: each feedback round appends to the conversation, so the retried request is strictly larger and more expensive, with a different prefix beyond the breakpoint. A request that needs one feedback round costs roughly 2.2× a single call: the original call, plus a retry about 20% larger because it carries the failed output and the feedback. If 20% of requests need a round, the average cost per request is about 1 + 0.2 × 1.2 = 1.24× the single-call cost. Budget for that, and alert if the rate climbs — a rising repair rate is usually a prompt or schema regression, not a model problem.
 
 ## 2.6 Streaming failure and resumption
 

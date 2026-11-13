@@ -132,13 +132,13 @@ class ModelBreaker:
                 log.warning("breaker_open", extra={"failures": len(self._failures)})
 ```
 
-Note what the breaker does *not* do: it does not fail closed on 429, and it does not count a 400 toward opening. Those two decisions are the whole design.
+Note what the breaker does *not* do: a 429 does not count toward opening it, and neither does a 400. Those two decisions are the whole design.
 
 ### Concurrency and connection pooling
 
 The SDK clients are built on pooled HTTP clients and are safe to share; constructing one per request pays TLS handshake and connection setup every call. Create the client once per process, size the pool to your intended in-flight concurrency plus headroom, and gate concurrency with a semaphore you own rather than letting the pool queue for you — a pool that queues silently converts a rate-limit problem into a latency problem, which is harder to diagnose.
 
-The right in-flight number is not “as many as the pool allows”. Each streaming request holds a connection for the full generation duration, so concurrency and OTPM interact: a hundred concurrent streams at 40 tokens per second is 240,000 OTPM. Compute that product before you tune the pool.
+The right in-flight number is not “as many as the pool allows”. Each streaming request holds a connection for the full generation duration, so concurrency and OTPM interact: a hundred concurrent streams at 40 tokens per second is 100 × 40 × 60 = 240,000 OTPM. Compute that product before you tune the pool.
 
 ## 1.2 The economics of prompt caching, worked out
 
@@ -161,11 +161,11 @@ Suppose a prefix of *T* tokens is reused by *N* requests, and every request afte
 
 Setting them equal and solving for *N*:
 
-> *N\** = (*w* − *r*) / (1 − *r*) + 1
+> *N\** = (*w* − *r*) / (1 − *r*)
 
-On Opus 5.5 with a five-minute TTL (*w* = 1.25, *r* = 0.05) that is *N\** ≈ 2.26, so **two requests are already cheaper than two uncached ones**: 1.25 + 0.05 = 1.30 units against 2.00. One request alone — a write with no read — costs 1.25 units against 1.00, a flat 25% penalty for nothing.
+On Opus 5.5 with a five-minute TTL (*w* = 1.25, *r* = 0.05) that is *N\** ≈ 1.26. Break-even falls between the first and second request, so **two requests are already cheaper than two uncached ones**: 1.25 + 0.05 = 1.30 units against 2.00. One request alone — a write with no read — costs 1.25 units against 1.00, a flat 25% penalty for nothing.
 
-With the one-hour TTL (*w* = 2.00, *r* = 0.05), *N\** ≈ 3.05. Two requests cost 2.00 + 0.05 = 2.05 units against 2.00: still a loss, by 2.5%. Three cost 2.00 + 0.10 = 2.10 against 3.00, a 30% saving. The documented summary — a five-minute write pays off after one read, a one-hour write after two — falls straight out of the algebra.
+With the one-hour TTL (*w* = 2.00, *r* = 0.05), *N\** ≈ 2.05, just past the second request. Two requests cost 2.00 + 0.05 = 2.05 units against 2.00: still a loss, by 2.5%. Three cost 2.00 + 0.10 = 2.10 against 3.00, a 30% saving. The documented summary — a five-minute write pays off after one read, a one-hour write after two — falls straight out of the algebra.
 
 ### Break-even in hit rate
 
@@ -196,7 +196,7 @@ Uncached input tokens: Σ(40,000 + 300*k*) for *k* = 1…12 = 480,000 + 23,400 =
 
 Cached, with one breakpoint at the end of the 40,000-token prefix:
 
--   Turn 1: write 40,000 at 1.25× → 50,000 billable-equivalent tokens, plus 300 uncached.
+-   Turn 1: write 40,000 at 1.25× → 50,000 billable-equivalent tokens, plus 300 uncached. (An equivalent token is one token billed at the base input price, so 40,000 tokens at 1.25× cost the same as 50,000 plain input tokens. Converting every category to this unit lets you add them up.)
 -   Turns 2–12: read 40,000 at 0.05× → 2,000 equivalent each, 22,000 in total, plus 23,100 uncached tail tokens.
 -   Total: 50,000 + 22,000 + 23,400 = **95,400 equivalent tokens**, or **\$0.1908**.
 
@@ -206,7 +206,7 @@ An **81% reduction in input spend**. Notice where the remaining cost sits: 23,40
 
 Haiku 5.5 is the one current model priced by prompt length, and the discontinuity is brutal. At or below 100,000 prompt tokens, input is \$0.10/MTok and a cache read \$0.01/MTok. Above it, input is \$0.50/MTok and a read \$0.05/MTok — a flat **5× step** applied to the whole request, with no proration. A 99,000-token prompt costs **\$0.0099**; a 101,000-token prompt costs **\$0.0505**. Two per cent more input, 5.1× the price.
 
-The trap is that *prompt length for tiering includes cache reads*. A 150,000-token cached corpus on Haiku 5.5 reads at \$0.05/MTok, not \$0.01/MTok, because the request is over the threshold. Compare honestly against Sonnet 5.5 at that point: \$0.0075 against \$0.015 — still cheaper, but the 20× gap you were counting on has become 2×, against a considerably stronger model. Workloads just under the threshold should be *engineered* to stay there; workloads comfortably above it should be re-benchmarked against Sonnet.
+The trap is that *prompt length for tiering includes cache reads*. A 150,000-token cached corpus on Haiku 5.5 reads at \$0.05/MTok, not \$0.01/MTok, because the request is over the threshold. Compare honestly against Sonnet 5.5 at that point: \$0.0075 against \$0.015 — still cheaper, but the gap you were counting on (10× on cache reads below the threshold, 20× on fresh input) has become 2×, against a considerably stronger model. Workloads just under the threshold should be *engineered* to stay there; workloads comfortably above it should be re-benchmarked against Sonnet.
 
 Haiku is also the family where the ITPM footnote must be checked generation by generation: Haiku 3.5 counted cache reads toward ITPM, and that exception has historically been Haiku-specific. Read the current table rather than assuming.
 
@@ -226,7 +226,7 @@ Where regulatory isolation is required rather than merely desirable, use separat
 
 ### Pre-warming, concurrency, and the ordering constraint
 
-A cache entry becomes available only once the first response has begun. Fan out fifty requests simultaneously against a cold prefix and you will pay fifty writes, not one write and forty-nine reads. On a 200,000-token prefix on Opus 5.5 at \$4/MTok that error costs 50 × 200,000 × 1.25 × \$4/MTok = **\$50.00** instead of \$3.56 — a fourteenfold overrun caused entirely by scheduling.
+A cache entry becomes available only once the first response has begun. Fan out fifty requests simultaneously against a cold prefix and you will pay fifty writes, not one write and forty-nine reads. On a 200,000-token prefix on Opus 5.5 at \$4/MTok that error costs 50 × 200,000 × 1.25 × \$4/MTok = **\$50.00**. Done in order, the same work costs one write at \$1.00 plus forty-nine reads at 200,000 × 0.05 × \$4/MTok = \$0.04 each, \$2.96 in total. That is a seventeenfold overrun caused entirely by scheduling.
 
 The fix is a serialisation point: issue one request, wait until its response starts, release the rest. Pre-warming formalises this. Send `max_tokens: 0` with a breakpoint on the shared prefix; the response returns empty content, `stop_reason: "max_tokens"` and a populated usage block, billing the write plus zero output tokens. Three constraints bite:
 
@@ -609,7 +609,7 @@ Arithmetic for one 200,000-token bundle on Sonnet 5.5:
 -   One-hour cache, no batch: (200,000 × 2.0 + 45 × 200,000 × 0.05) × \$2/MTok = (400,000 + 450,000) × \$2/MTok = **\$1.70**
 -   One-hour cache plus batch: **\$0.85**
 
-A 21.6× reduction, of which 10.8× is caching and 2× batching. Across 800 bundles a day that is \$14,720 against \$680 — \$4.2 million a year against \$194,000. The arithmetic is not an optional appendix.
+A 21.6× reduction, of which 10.8× is caching and 2× batching. Across 800 bundles a day that is \$14,720 against \$680 — \$5.4 million a year against \$248,000, running every day. The arithmetic is not an optional appendix.
 
 **Stage 4 — Interactive path.** The same cached prefix serves the interactive feature, but synchronously and streamed, because a human is waiting. Two consequences: the interactive path must never warm a cold prefix, since it would pay a 200,000-token write while the user waits; and it must use the *same* model, effort, tool list and `output_config.format` as the batch path, or it misses. Against a cold bundle, serve uncached and warm asynchronously — paying 1× once beats making the user wait for a write.
 

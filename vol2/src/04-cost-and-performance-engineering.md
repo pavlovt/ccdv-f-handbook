@@ -166,7 +166,7 @@ Expected shape per request: `read = 3,040`, `write_5m = 160`, `fresh = 450`, `ou
   **Per request**    **\$0.0001254**   **\$0.002204**   **\$0.004408**
   **Monthly (8M)**   **\$1,003**       **\$17,632**     **\$35,264**
 
-Haiku is 17.6x cheaper than Sonnet here. That ratio is larger than the 20x rate ratio would suggest for input alone and smaller than you might guess from the headline prices, because the cache read — the largest token category — is discounted 0.1x on Haiku but 0.05x on Sonnet, narrowing the gap on that line to 10x rather than 20x.
+Haiku is 17.6x cheaper than Sonnet here. That is a little below the 20x ratio of the headline prices. Three of the four lines do differ by exactly 20x, but the cache read — the largest token category — is discounted to 0.1x on Haiku and to 0.05x on Sonnet, which narrows the gap on that line to 10x and pulls the overall ratio down.
 
 A naive reading ships Haiku here. Suppose your eval set puts Haiku at 94% and Sonnet at 97% on this taxonomy. The question is not “is 3 points worth \$16,629/month” in the abstract. It is: **what does one misclassification cost downstream?**
 
@@ -317,7 +317,7 @@ def cliff_check(s: Shape, headroom: float = 0.08) -> str | None:
     return None
 ```
 
-Instrument the real thing too: alert on the *fraction of Haiku requests billed in tier 2*, derived from `cache_read_input_tokens + cache_creation_input_tokens + input_tokens`. A drift from 2% to 30% is a 2.2x bill increase that no dashboard tracking request counts will show you.
+Instrument the real thing too: alert on the *fraction of Haiku requests billed in tier 2*, derived from `cache_read_input_tokens + cache_creation_input_tokens + input_tokens`. Tier 2 costs 5x, so a share `s` of requests in tier 2 multiplies the bill by `1 + 4s`. A drift from 2% to 30% takes that factor from 1.08 to 2.2, roughly doubling the bill in a way that no dashboard tracking request counts will show you.
 
 ## 3.5 Effort as a cost and latency dial
 
@@ -458,7 +458,7 @@ Confidence is not a single thing, and a self-reported probability from a model i
 
   Abstention — model emits an explicit “uncertain” label   Soft              Yes                           Needs the label in the taxonomy and prompt support for using it.
 
-  Self-ported confidence score                             Soft              Yes                           Poorly calibrated; useful only after you fit a threshold on held-out data.
+  Self-reported confidence score                             Soft              Yes                           Poorly calibrated; useful only after you fit a threshold on held-out data.
 
   Self-consistency across `n` cheap samples                Soft              No — costs `n`x cheap stage   Strong, but `n·c_cheap` must stay well under `c_exp`.
 
@@ -543,7 +543,7 @@ Latency decomposes, and the decomposition tells you which lever applies.
     total = queue + prefill(prompt_tokens) + output_tokens / OTPS
     TTFT  ≈ queue + prefill
 
-Each term has one effective lever:
+In this section `prefill` means the time the model spends processing the prompt before it can emit the first token. It has nothing to do with prefilling an assistant turn. Each term has one effective lever:
 
   --------------------------------------------------------------------------------------------------------------------------------
   Term                    Driven by                                 Lever
@@ -593,7 +593,7 @@ A request that issues 20 independent subcalls and waits for all of them finishes
 
     P(all 20 under the 1-call p99) = 0.99²⁰ = 0.818
 
-So **18% of fan-outs exceed the single-call p99.** And `0.5²⁰ ≈ 1 × 10⁻⁶` — the aggregate essentially never achieves the single-call median. The expected maximum of 20 draws sits near the single-call 97.5th percentile: your fan-out’s p50 *is* your single call’s p97.5.
+So **18% of fan-outs exceed the single-call p99.** And `0.5²⁰ ≈ 1 × 10⁻⁶` — the aggregate essentially never achieves the single-call median. The median of the maximum of 20 draws is the single-call percentile `q` that solves `q²⁰ = 0.5`, which is about the 96.6th: your fan-out’s p50 *is* your single call’s p96.6.
 
 Three consequences:
 

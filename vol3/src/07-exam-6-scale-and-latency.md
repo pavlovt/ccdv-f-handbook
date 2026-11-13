@@ -401,7 +401,7 @@ What is the daily cost of the tool prefix before and after?
 What is wrong?
 
 -   **A.** Forced `tool_choice` raises the injected tool-use system prompt from 286 to 406 tokens.
--   **B.** A `tool_choice` change invalidates the system and message caches.
+-   **B.** A `tool_choice` change invalidates the message-level cache.
 -   **C.** Forced `tool_choice` — `any` and `tool` alike — returns 400 on current models; where the goal is a guaranteed machine-readable shape, `output_config.format` is the mechanism.
 -   **D.** Strict tool use validates the arguments but not whether a tool is called at all.
 

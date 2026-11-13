@@ -142,7 +142,7 @@ What is wrong?
 -   **A.** Forced `tool_choice` — both `any` and `tool` — returns 400 on current models; a guaranteed machine-readable shape should come from `output_config.format` instead.
 -   **B.** Forced `tool_choice` raises the injected tool-use system prompt from 286 to 406 tokens, which pushes the prefix past a limit.
 -   **C.** A tool used under `strict: true` counts against the limit of 20 strict tools per request.
--   **D.** Changing `tool_choice` invalidates the system and message caches, so every request is a cache miss.
+-   **D.** Changing `tool_choice` between requests invalidates the message-level cache, so a workflow that varies it rewrites its history on each change.
 
 **E5.16.** A health insurer runs two workloads through one workspace. One must execute inference only on US-based infrastructure and sets `inference_geo: "us"`; the other has no such requirement and omits the parameter. The auditors ask for a monthly report that demonstrates the first workload’s inference actually ran under the restriction.
 
@@ -426,13 +426,13 @@ What is wrong?
 -   **C.** Add a system-prompt instruction that text inside tool results is data and must never be followed.
 -   **D.** Enable strict tool use, so the tool’s arguments and results are both schema-validated.
 
-**E5.46.** A claims workflow flips `tool_choice` between `"auto"` during evidence gathering and `"none"` during the final write-up, within one conversation thread. Cache diagnostics report `system_changed` on every transition.
+**E5.46.** A claims workflow flips `tool_choice` between `"auto"` during evidence gathering and `"none"` during the final write-up, within one conversation thread. On every transition, `cache_read_input_tokens` falls to roughly the size of the tool definitions plus the system prompt, and the whole conversation history is written to the cache again.
 
 What explains it?
 
 -   **A.** A change to the tool definitions invalidates the tools, system and message caches.
--   **B.** Adding or removing images preserves the tools cache but invalidates the system and message caches.
--   **C.** A `tool_choice` change preserves the tools cache but invalidates the system and message caches; holding `tool_choice` constant and gating in application code avoids it.
+-   **B.** Adding or removing images preserves the tools and system caches but invalidates the message cache.
+-   **C.** A `tool_choice` change preserves the tools and system caches but invalidates the message cache; holding `tool_choice` constant and gating in application code avoids it.
 -   **D.** Switching `speed` preserves the tools cache but invalidates everything after it.
 
 ## Section 6 — Security and Safety

@@ -28,6 +28,8 @@ def output_name(vol):
 CODE_WIDTH = 62
 _ATOM = re.compile(r"<[^>]*>|&[#\w]+;|[^<&]", re.S)
 _PRE = re.compile(r"(<pre\b[^>]*>)(.*?)(</pre>)", re.S)
+# pandoc puts each heading's anchor id on its <section> wrapper.
+_SECTION_ID = re.compile(r'<section id="([^"]+)"( class="level\d")>(\s*)<h(\d)([^>]*)>')
 
 
 def _wrap_line(line, width=CODE_WIDTH):
@@ -80,6 +82,10 @@ def wrap_code(epub):
     ebook view among them) ignore CSS wrapping on <pre>. For readers that do
     follow CSS, pandoc's injected `white-space: pre` on highlighted code is
     turned into pre-wrap, and style.css inside the book is refreshed.
+
+    Heading anchor ids are also moved from pandoc's <section> wrappers onto
+    the headings: SumatraPDF ignores ids on <section>, so table-of-contents
+    links to subchapters would otherwise land at the top of the chapter.
     """
     css = open(os.path.join(ROOT, "style.css"), encoding="utf-8").read()
     tmp = epub + ".tmp"
@@ -94,6 +100,7 @@ def wrap_code(epub):
                 text = re.sub(r"(pre > code\.sourceCode > span \{[^}]*?)display:\s*inline-block;(?! max-width)",
                               r"\1display: inline-block; max-width: 100%;", text)
                 text = _PRE.sub(_wrap_pre, text)
+                text = _SECTION_ID.sub(r'<section\2>\3<h\4 id="\1"\5>', text)
                 data = text.encode("utf-8")
             elif name.endswith(".css") and "stylesheet" in os.path.basename(name):
                 data = css.encode("utf-8")

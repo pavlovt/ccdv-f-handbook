@@ -153,6 +153,51 @@ the likely cause and a suggested fix for each. Do not edit files.
 
 Built-in subagents include a fast read-only Explore agent for codebase search, a Plan agent used during plan mode, and a general-purpose agent. Restricting `tools` is the main safety lever: a reviewer that cannot edit cannot damage anything.
 
+## Effort Levels and Ultracode
+
+Claude Code exposes the API’s effort setting (Chapter 6) as a menu, opened with `/effort` in the CLI or from the model picker in the desktop app. The menu also holds a separate switch, **Ultracode**, which is easy to mistake for a sixth effort level. It is not one.
+
+  ------------------------------------------------------------------------------------------------------------------------------------------------
+  Menu entry        API value         What it means
+  ----------------- ----------------- ------------------------------------------------------------------------------------------------------------
+  Low               `low`             Least thinking. Fastest and cheapest; right for lookups, classification and small edits
+
+  Medium            `medium`          Marked *Recommended*. Moderate thinking that may be skipped on simple requests; the default on Opus 5.5
+
+  High              `high`            Thinks on most requests that benefit from it
+
+  Extra             `xhigh`           Thinks more readily and deeply than High; extended exploration
+
+  Max               `max`             No limit on thinking. The menu warns of “3.5× or more usage”
+
+  Ultracode         (separate toggle) Not an effort level. Turns on automatic multi-agent workflows at whatever effort level is selected
+  ------------------------------------------------------------------------------------------------------------------------------------------------
+
+The menu’s own caption sums up the effort scale: higher effort gives more thorough answers but takes longer and uses up your plan’s limits faster. The point made in Chapter 6 applies here too. A high level does not lower itself on easy tasks, so a lookup at Max still costs noticeably more than at Low. Pick the level for the work in front of you.
+
+**What Ultracode is.** Effort decides how thoroughly *one* Claude works through your request. Ultracode changes *how the work is organised*. With it on, Claude Code turns each substantive task into a **dynamic workflow**: Claude writes a short JavaScript script, and a runtime executes it in the background. The script starts many subagents, often dozens and up to 1,000 per run, and gathers their results. One request can become several workflows in a row, for example one to understand the code, one to make the change, and one to verify it. The intermediate results stay in the script’s variables rather than in Claude’s context, so the main conversation receives only the final answer. A script can also make agents check each other’s findings before reporting them, which gives a more trustworthy result than a single pass.
+
+Do not confuse this with the *workflow* pattern of Chapter 7, where your own code fixes the steps in advance. A dynamic workflow is a script that Claude writes for one task, and it orchestrates agents.
+
+**Turning it on and off:**
+
+-   `/effort ultracode` turns it on for the current session, and `/effort ultracode off` turns it off. In the `/effort` menu, Tab flips the toggle.
+-   `claude --effort ultracode` starts a session with Ultracode on and the effort level set to `xhigh`.
+-   `"ultracode": true` in a settings file turns it on for every session. The `effortLevel` setting does not accept `ultracode`, because Ultracode has its own key.
+-   Otherwise, turning Ultracode on or off leaves the effort level unchanged. Before Claude Code v2.1.284 it forced `xhigh`, and some older articles still say so.
+
+**For one task only.** Leave the toggle off and include the keyword `ultracode` in a prompt you type, or just ask for “a workflow”. Claude then runs that one task as a workflow and the rest of the session is unaffected. The keyword works only in prompts a person types. It has no effect in `claude -p`, scheduled tasks, or text relayed from a webhook or pull-request comment. The `/deep-research` command is a ready-made workflow that comes with Claude Code.
+
+**What it costs.** Every request in an Ultracode session uses more tokens and takes longer than the same request without a workflow, and on a subscription you hit your session or weekly limit sooner. Turning Ultracode on also counts as agreeing to large runs, so three safeguards no longer apply:
+
+-   the *Large workflow* warning, which normally appears above 25 agents or about 1.5 million projected tokens;
+-   the limit on how many subagents can run at once;
+-   in `auto` permission mode, the approval prompt before the first workflow launch.
+
+Each agent’s tool calls still pass through the session’s normal permission rules and sandboxing. Administrators cannot block Ultracode alone. Disabling workflows (`"disableWorkflows": true`) removes it, and an organisation effort cap lowers the effort level it runs at without turning it off.
+
+**When to use it.** Use it for work too large for one conversation to coordinate: an audit of every file for the same flaw, a migration across hundreds of files, research whose sources must be checked against each other, or a plan worth drafting from several angles. For lookups and ordinary edits it wastes far more than Max effort does. Turn it on for the big job, then switch it off with `/effort ultracode off`.
+
 ## Connecting MCP Servers
 
 Claude Code is an MCP host (Chapter 9). Add servers from the shell with `claude mcp add`:
@@ -196,6 +241,7 @@ A `.mcp.json` file supports `${VAR}` and `${VAR:-default}` expansion in commands
 -   Settings precedence runs managed, command line, local, project, user. Permission rules evaluate deny, ask, allow.
 -   Hooks run code at lifecycle events; exit 2 blocks. Subagents isolate context. Skills package procedures.
 -   `claude mcp add` registers servers at local, project (`.mcp.json`) or user scope.
+-   `/effort` sets how thoroughly Claude works (Low, Medium, High, Extra, Max). Ultracode is a separate toggle that turns tasks into multi-agent workflows. It is costly, so use it for large jobs only.
 
 ## Practice Questions
 

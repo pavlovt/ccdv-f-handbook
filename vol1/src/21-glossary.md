@@ -42,6 +42,8 @@
 
 **Domain linking** — The step that connects your company’s email domain to the partner program so that you can register. It takes 7–10 days via partner-support\@anthropic.com.
 
+**Dynamic workflow** — In Claude Code, a short JavaScript script that Claude writes for one task and that a runtime executes in the background. The script starts many subagents, often dozens, and collects their results, so the main conversation receives only the final answer. It suits jobs too large for one conversation, such as auditing every file in a repository, but it uses far more tokens. Not the same as a *workflow*, where your own code fixes the steps in advance. Compare *Ultracode*.
+
 **Effort** — The setting that tells a current Claude model how much work to put into a response: how readily and how long it thinks, and how thorough its answers and tool use are. It is set as `output_config.effort` with the levels `low`, `medium`, `high`, `xhigh`, and `max`. Lower effort is faster and cheaper; higher effort helps on hard reasoning. It is the main quality-versus-cost dial on models where temperature is no longer available.
 
 **Eval set** — A fixed collection of test inputs, each with an expected output or a way to grade the answer, used to measure how well a prompt, model, or system performs. Because model output varies, you judge it by the pass rate across the whole set rather than by one run. A good eval set includes normal cases, edge cases, and every past failure.
@@ -183,6 +185,8 @@
 **Trust boundary** — The line between things your system can rely on (your code, your system prompt, your database permissions) and things it cannot (user input, retrieved documents, web pages, third-party tool output, and the model itself once it has read any of those). Security checks belong where untrusted content would turn into an action: in the code that executes tools and fetches data.
 
 **TTFT (time to first token)** — How long a request takes before the first piece of the answer arrives. It covers network time, queueing, reading the whole input, and any thinking before the answer begins. Long prompts and heavy thinking raise it; caching a long shared prefix lowers it.
+
+**Ultracode** — A Claude Code setting, shown as a toggle under the effort levels in the `/effort` menu, that makes Claude handle each substantive task as a *dynamic workflow*. It is not an effort level: it changes how the work is organised (many agents instead of one), not how hard each agent thinks. It makes every request slower and much more expensive, so turn it on for large jobs and off afterwards. Typing the keyword `ultracode` in a single prompt does the same for that prompt only.
 
 **Workflow** — A system in which your code fixes the sequence of steps in advance and the model fills in each step: classify, then extract, then check. Because the path is written down, workflows are predictable in cost and time and easy to test step by step. Choose a workflow whenever you can list the steps beforehand; choose an agent only when the steps depend on what earlier steps discover.
 

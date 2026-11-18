@@ -428,7 +428,12 @@ Choose the SDK otherwise. The retry defaults and streaming accumulation alone re
 
 ## Versioning
 
-`anthropic-version` is a required date-stamped header. The current value is `2023-06-01`.
+`anthropic-version` is a required date-stamped header. A new API version is how Anthropic ships breaking changes, and your code moves to it when it is ready; the old version keeps working. Two versions are in use:
+
+-   **`2023-06-01`**, the long-standing version. Most examples in this book, including the request at the start of this chapter, use it, and exam questions written against the July 2026 Exam Guide will assume it.
+-   **`2026-10-21`**, the newer version. Its main breaking changes on the Messages API: `temperature`, `top_p`, and `top_k` are rejected with a 400 on every model, even at their default values (Chapter 2); a `document` block placed directly in an `assistant` message is rejected; and a `text` block with citations is rejected in a `user` message, which matters when you pass one call’s cited output to another call as input. A few deprecated fields are also removed from Admin API responses.
+
+Which version you send depends on how you call the API. On raw REST you choose it, by the header you write. With an SDK, the SDK chooses: recent major releases send `2026-10-21` by default (for example Python 2.0.0 and TypeScript 1.0.0), and earlier releases send `2023-06-01`. Upgrading an SDK across a major version can therefore change the API version, and make a request that used to work return a 400, without a single change to your request code. Read the migration notes before such an upgrade, and run your tests after it.
 
 Within a version, the API guarantees that existing input parameters and existing output parameters keep working. What it explicitly reserves the right to do, without a version bump:
 

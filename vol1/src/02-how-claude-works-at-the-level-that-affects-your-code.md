@@ -1,6 +1,40 @@
 # How Claude Works, at the Level That Affects Your Code
 
-You do not need to understand transformer internals to build on Claude. You do need an accurate mental model of the handful of mechanics that leak into your code: how text becomes tokens, what the context window is a budget of, why outputs vary, why the API remembers nothing, and where the time goes. Most production bugs involving “weird model behavior” trace back to one of these, not to the model being unpredictable in some mystical way. This chapter builds that model, and later chapters assume it.
+You do not need to understand transformer internals to build on Claude. You do need an accurate mental model of the handful of mechanics that leak into your code: how the model writes its answer, how text becomes tokens, what the context window is a budget of, why outputs vary, why the API remembers nothing, and where the time goes. Most production bugs involving “weird model behavior” trace back to one of these, not to the model being unpredictable in some mystical way. This chapter builds that model, and later chapters assume it.
+
+## How the model produces text: one token at a time
+
+At its core, a language model does one thing. You give it a piece of text, and it returns a probability for every possible next token: the next small chunk of text (the next section explains tokens; for now, think “roughly a word”). That is all. It does not return a whole answer, a paragraph, or even a sentence. It returns one list of probabilities.
+
+This often confuses people at first: the model has your whole question, so why does it need to “predict” anything? Because it has your question, not the answer. The answer is not stored anywhere waiting to be looked up; it does not exist yet. Predicting the next token is how the model *writes* the answer.
+
+Take the question *“What is the capital of France?”* The model writes its reply like this:
+
+1.  It reads your question and produces probabilities for the first token of the reply. One token is chosen: **“The”**.
+2.  That token is added to the text. The model reads the question plus “The” and chooses **“capital”**.
+3.  It reads the question plus “The capital” and chooses **“of”**.
+4.  This repeats, one token per step, until the text reads “The capital of France is Paris.” and the model chooses a special end-of-turn token that means “I am finished”.
+
+Each step reads *everything written so far*: your system prompt, the conversation, your question, and every token the model itself has already written. A long answer is simply this loop run thousands of times. Thinking works the same way: the model’s reasoning is written token by token before the visible answer, and the answer’s tokens are chosen with that reasoning in view.
+
+The loop stops for one of three reasons, and the API tells you which in the response’s `stop_reason` field: the model chose the end-of-turn token (`end_turn`), it reached the output limit you set (`max_tokens`), or it produced one of your stop strings (`stop_sequence`). Chapter 3 covers all the values.
+
+**Where training fits.** The question “why predict, when it has the whole text?” does make sense for the training stage, where the model *is* shown complete texts: books, articles, code. Training is a fill-in-the-blank exercise. The model sees “The capital of France is ___” with everything after the blank hidden, predicts the next token, is shown the real one (“Paris”), and is adjusted slightly whenever it guessed badly. Repeated across trillions of tokens, this forces it to learn grammar, facts, and patterns of reasoning, because predicting the next token of a text well requires understanding what the text is about. Later training stages teach it to follow instructions, use tools, and reason, but the basic machinery is unchanged.
+
+  -----------------------------------------------------------------------------------------------------------------------
+  Stage              Does it have the whole text?                     Why predict the next token?
+  ------------------ ------------------------------------------------ ---------------------------------------------------
+  Training           Yes, but the part after each position is hidden  To learn, by checking each guess against the real token
+
+  Using Claude       It has your prompt; the answer does not exist    To write the answer, one token after another
+  -----------------------------------------------------------------------------------------------------------------------
+
+Four consequences of this loop run through the rest of this chapter and the book:
+
+-   **Everything is measured in tokens.** Cost, speed, and limits are all counted per token, because the token is the unit the loop works in.
+-   **The model only knows what is in the text it reads.** Each step reads the text so far, and nothing else. That text is the *context*, and the maximum size it may reach is the context window.
+-   **A token has to be chosen at every step.** How that choice is made from the probabilities, called *sampling*, is why the same request can produce different answers.
+-   **Output takes time in proportion to its length.** One loop step per token means a long answer takes longer than a short one, whatever the length of the prompt.
 
 ## Tokens and tokenization
 
@@ -67,9 +101,76 @@ Older models returned a validation error for the middle case rather than truncat
 
 For long-running conversations, the platform offers server-side compaction (beta on supported models) and context editing (clearing old tool results or thinking blocks). The simpler, universal tools are still yours: trim, summarize, or retrieve instead of replaying everything.
 
-## Non-determinism and temperature
+## Sampling, temperature, and non-determinism
 
-Claude generates text one token at a time. At each step the model produces a probability distribution over the vocabulary, and a token is selected from it. **Temperature** rescales that distribution before selection: lower values concentrate probability on the top candidates, higher values flatten the distribution so less likely tokens are chosen more often. Temperature near zero is “mostly greedy”, not a guarantee of identical output.
+As the first section described, at every step of the loop the model produces a probability for every possible next token, and one token has to be chosen. Choosing that token is called **sampling**. The simplest rule would be “always take the most likely token” (called *greedy* decoding), but that is not how Claude normally works. The token is drawn at random, weighted by the probabilities: a token with a 50% probability is chosen about half the time, one with 1% about once in a hundred. This is why the same request can give different answers.
+
+Three parameters have historically controlled this draw. A running example makes them concrete. Suppose that, after “The cat sat on the”, the model’s probabilities for the next token are:
+
+  ---------------------------
+  Token         Probability
+  ------------- -------------
+  mat           50%
+
+  sofa          25%
+
+  floor         15%
+
+  roof          6%
+
+  moon          3%
+
+  banana        1%
+  ---------------------------
+
+### Temperature: making the odds more even or more lopsided
+
+**Temperature** changes the probabilities before the draw. Think of a weighted die.
+
+-   **Low temperature (towards 0)** makes the die more lopsided: the likely tokens get even more likely and the unlikely ones nearly vanish. Here “mat” would win almost every time. Output becomes predictable and nearly the same from run to run. People used low values for extraction, classification, and code.
+-   **Temperature 1** rolls the die with the model’s own probabilities, unchanged: “mat” half the time, “sofa” a quarter of the time, and so on.
+
+On Claude the accepted range was 0 to 1, and the default was 1. (Some other providers allow values above 1, which flatten the odds further; Claude never did.) Temperature near zero is “mostly greedy”, not a guarantee of identical output, for reasons listed below.
+
+**Temperature acts on the output, never on the input.** This is the single most important thing to understand about it. The model reads your prompt (system prompt, conversation, question, documents) the same way at every temperature. Your words are not sampled: they are given, and nothing random happens to them. Temperature comes into play only afterwards, at the moment the model picks each token of its reply. It changes how a token is chosen from the probabilities, not the probabilities themselves, which come from what the model understood of the prompt.
+
+Two consequences follow:
+
+-   **Temperature cannot fix a misunderstood prompt.** If the model misreads an ambiguous question, its probabilities already favor the wrong answer, and a low temperature simply picks that wrong answer more consistently. The fix is a clearer prompt, not a different temperature.
+-   **Everything the model writes is affected, and only that.** On each step the token just written becomes part of the text read on the next step, so one unlikely early choice shapes everything after it. Thinking is output too, so temperature affects the reasoning as well as the visible answer, which is part of why thinking fixes it at 1 (see below).
+
+### top_k: keep only the k most likely tokens
+
+`top_k` removes candidates rather than changing their odds. It keeps only the **k most likely tokens**, discards the rest, and draws among those that remain, with their probabilities scaled back up to add to 100%.
+
+-   `top_k = 3` keeps mat, sofa, and floor; “moon” and “banana” can no longer be chosen.
+-   `top_k = 1` keeps only “mat”, which is greedy decoding.
+
+It stops rare, odd tokens from slipping in. Its weakness is that the number is fixed: when the model is very sure (one token at 99%), keeping three still lets two poor options in, and when many tokens are about equally good, keeping three can cut good ones.
+
+### top_p: keep the most likely tokens until they add up to p
+
+`top_p`, also called *nucleus sampling*, also removes candidates, but adapts to how sure the model is. It goes down the list from the most likely token, adding up probabilities, and stops as soon as the total reaches **p**. Only the tokens counted so far stay in the draw.
+
+-   `top_p = 0.75` keeps mat (50%) and sofa (25%), which together reach 75%.
+-   `top_p = 0.9` keeps mat, sofa, and floor (50 + 25 + 15 = 90%).
+-   `top_p = 1` keeps everything.
+
+When the model is confident, only one or two tokens survive the cut; when it is unsure, more stay in the running.
+
+  ------------------------------------------------------------------------------------
+  Parameter          What it does to the draw
+  ------------------ -----------------------------------------------------------------
+  `temperature`      Makes the odds more even or more lopsided
+
+  `top_k`            Keeps only the k most likely tokens
+
+  `top_p`            Keeps the most likely tokens until their total reaches p
+  ------------------------------------------------------------------------------------
+
+Anthropic’s guidance was to adjust only `temperature` in normal use and leave the other two for special cases. On Claude 4 models, sending both `temperature` and `top_p` in one request is an error: choose one.
+
+### Why identical requests still differ
 
 Why identical requests can still differ, even at low temperature:
 
@@ -77,7 +178,30 @@ Why identical requests can still differ, even at low temperature:
 -   Infrastructure details (model updates behind an alias, different serving hardware) change over time.
 -   Thinking adds a long stochastic reasoning path before the answer.
 
-One important version note, and a likely exam trap. On Claude 4.7 and later, `temperature`, `top_p`, and `top_k` are deprecated: passing a non-default value returns a 400, and version 1.0 of the Python SDK removes the parameters altogether, so passing one raises a `TypeError` before a request is ever sent. Reasoning depth is steered instead through `output_config.effort`, with levels `low`, `medium`, `high`, `xhigh`, and `max` — note that effort lives at `output_config.effort`, not inside a `thinking` object. Defaults differ by model: `medium` on Opus 5.5 and Haiku 5.5, `high` on the others.
+### Why thinking required a temperature of 1
+
+Even on models that accepted sampling parameters, turning thinking on locked them: `temperature` had to stay at 1, and `top_k` could not be set. Anthropic documents the rule but not the reason. The usual explanations, which apply to reasoning models generally, are these:
+
+-   **The model learned to reason at temperature 1.** Reasoning is trained by having the model write many chains of thought, scoring the results, and reinforcing the ones that worked, normally sampling at temperature 1. Its reasoning is tuned for that setting, and its quality is measured there.
+-   **Low temperature causes loops in long text.** Thinking can run for thousands of tokens. Near-greedy selection makes the model take the same top choice every time, and once it starts repeating a phrase or line of reasoning, each repetition makes the next one more likely. A little randomness lets it break out.
+-   **Some randomness helps reasoning.** Good reasoning often means trying an approach, noticing a mistake, and trying another. Randomness makes a second approach more likely to be considered, rather than locking onto the first idea.
+-   **One setting is simpler to test.** If everyone runs the reasoning the same way, Anthropic’s quality and safety testing covers the setting people actually use.
+
+Low temperature was usually meant to make the final answer consistent. With thinking, consistency comes mostly from the reasoning itself: a model that works a problem through tends to reach the same answer even when its wording differs between runs.
+
+### Sampling parameters on current models
+
+One important version note, and a likely exam trap. On Claude 4.7 and later, `temperature`, `top_p`, and `top_k` are deprecated: passing a non-default value returns a 400, and version 1.0 of the Python SDK removes the parameters altogether, so passing one raises a `TypeError` before a request is ever sent. On the newer API version `2026-10-21`, sending any of the three returns a 400 on every model, older ones included. Thinking is now on by default on most current models, so the parameters had little use left.
+
+Sampling itself has not gone away. The model still draws each token at random from its probabilities, which is why the same prompt still gives different answers; what has gone is your ability to change how the draw works. The fact that some models still accept the default value suggests they run at the old default of 1, but Anthropic does not publish the internal details, so treat that as an inference.
+
+What replaces the parameters:
+
+-   **For consistent output,** write clear instructions with examples, and use structured outputs (Chapter 5) when you need a fixed format. A schema guarantees the shape of the output far more reliably than low temperature ever did. Where the exact same answer is needed again, store it and reuse it.
+-   **For varied, creative output,** ask for it in the prompt (“give five very different options”), or run the request several times.
+-   **For how hard the model works,** use effort, described next. It is a different dial: it controls how deeply the model reasons, not how random its word choice is.
+
+Reasoning depth is steered instead through `output_config.effort`, with levels `low`, `medium`, `high`, `xhigh`, and `max` — note that effort lives at `output_config.effort`, not inside a `thinking` object. Defaults differ by model: `medium` on Opus 5.5 and Haiku 5.5, `high` on the others.
 
 Be careful how you carry this into the exam. CCDV-F Exam Guide v1.0 dates to July 2026, so exam questions may still treat `temperature` as a live parameter and may still expect `thinking` with an explicit `budget_tokens`. Learn both: know what the parameters *mean*, because that is what a conceptual question tests, and know that they are deprecated on current models, because that is what production code requires. The underlying principle survives every version change: temperature governs the randomness of token selection, not correctness or reasoning quality, and reaching for it to fix an underspecified prompt is the wrong instinct.
 
@@ -226,6 +350,8 @@ Streaming does not shorten total generation time. It sends tokens as they are pr
 
 ## Chapter checklist
 
+-   Remember the loop: the model writes one token at a time, each chosen from probabilities over everything written so far.
+-   Know what temperature, top-p, and top-k do to the draw, and that current models reject non-default values; get consistency from prompts and structured outputs instead.
 -   Measure tokens with the counting endpoint against the exact target model; expect differences across model generations.
 -   Budget input plus output plus thinking inside one window; always check `stop_reason`.
 -   Test model-dependent behavior statistically, not by equality.

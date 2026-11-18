@@ -92,6 +92,8 @@
 
 **Multimodal input** — Input that mixes text with other media, such as images or PDF documents, in the same request. Each media type has its own size, count, and format limits, and its own token cost.
 
+**Next-token prediction** — The one thing a language model does: given some text, return a probability for every possible next token. The model writes an answer by repeating this: it chooses one token, adds it to the text, and predicts again, until it chooses an end-of-turn token or hits `max_tokens`. Training teaches the skill by hiding the next token of real texts and adjusting the model whenever its guess is wrong.
+
 **OnVUE** — Pearson VUE’s online-proctored delivery option. You take the exam from home or your office under remote supervision, with your webcam, microphone, and screen monitored.
 
 **Orchestrator-worker** — A pattern in which one model call (the orchestrator) looks at a task, decides at runtime how to split it into pieces, hands each piece to a separate worker call, and combines what comes back. Use it when you cannot know the subtasks in advance, for example a change that touches an unknown number of files. If you can list the subtasks beforehand, plain parallel calls are cheaper and more predictable.
@@ -124,7 +126,7 @@
 
 **Routing** — First classifying each request, then sending it down the path that suits it: a different prompt, a different set of tools, or a cheaper model for easy cases and a stronger one for hard cases. Done well, most traffic takes the cheap path.
 
-**Sampling** — How the model picks each next token. At every step it produces a probability for every possible next token, and one is chosen from that distribution. On older models, parameters such as temperature and top-p control how much randomness goes into the choice; on Claude 4.7 and later they are deprecated.
+**Sampling** — How the model picks each next token. At every step it produces a probability for every possible next token, and one is drawn at random, weighted by those probabilities: a token at 50% is picked about half the time. This is why the same request can give different answers. On older models, temperature, top-p, and top-k control the draw; on Claude 4.7 and later they are deprecated, but the draw itself still happens. Greedy decoding, by contrast, always takes the most likely token.
 
 **Scaled score** — The exam’s reported score, on a scale from 100 to 1000. A score of 720 or higher is a pass. It is not a percentage of questions answered correctly.
 
@@ -156,7 +158,7 @@
 
 **System prompt** — The instructions you send in the separate `system` parameter, outside the conversation, that set the model’s role, rules, and context for the whole session. The model treats them as the operator’s standing instructions, so rules that must hold on every turn belong there. It is not a secret store and not a security control.
 
-**Temperature** — A sampling parameter that controls randomness. Lower values make output more deterministic, and models before Claude 4.7 accept values from 0 to 1. On Claude 4.7 and later the parameter is deprecated and a non-default value returns a 400, although exam questions may still treat it as live.
+**Temperature** — A sampling parameter that changes the odds of each token before one is drawn. Low values make the likely tokens even more likely, so output is more predictable; a value of 1 (the default) uses the model’s own probabilities unchanged. It acts only on the output, as each token of the reply is chosen; the prompt is read the same way at every temperature, so temperature cannot fix a misunderstood question. Models before Claude 4.7 accept values from 0 to 1, and thinking requires 1. On Claude 4.7 and later the parameter is deprecated and a non-default value returns a 400, although exam questions may still treat it as live.
 
 **Thinking block** — A response content block of type `thinking` with a `thinking` field (a summary of the reasoning, or an empty string under `display: "omitted"`) and an encrypted `signature`. It must be passed back unmodified during tool use. Safety-redacted reasoning arrives instead as a `redacted_thinking` block with an encrypted `data` field.
 
@@ -173,6 +175,10 @@
 **Tool use** — The mechanism by which the model asks for an action instead of only writing text. The model never runs anything itself: it returns a `tool_use` block naming a tool and its arguments, your code (or Anthropic, for server tools) carries it out, and the result goes back to the model so it can continue.
 
 **Tool use block** — A `tool_use` content block in the model’s response. It names the tool, provides its input, and has an ID that the matching `tool_result` must reference.
+
+**Top-k** — A sampling parameter (`top_k`) that keeps only the k most likely next tokens and draws among them, so rare tokens can never be picked. With `top_k = 1` the model always takes the most likely token. The number is fixed, so it does not adapt to how sure the model is. Deprecated on Claude 4.7 and later.
+
+**Top-p (nucleus sampling)** — A sampling parameter (`top_p`) that keeps the most likely next tokens until their probabilities add up to p, and draws among them. With `top_p = 0.9`, tokens are kept from the top of the list until they cover 90% of the probability. Unlike top-k, the number kept adapts: few when the model is sure, more when it is not. Deprecated on Claude 4.7 and later.
 
 **Trust boundary** — The line between things your system can rely on (your code, your system prompt, your database permissions) and things it cannot (user input, retrieved documents, web pages, third-party tool output, and the model itself once it has read any of those). Security checks belong where untrusted content would turn into an action: in the code that executes tools and fetches data.
 

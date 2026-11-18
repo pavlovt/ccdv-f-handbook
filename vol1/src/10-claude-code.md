@@ -276,3 +276,19 @@ A. Run `/clear` and re-explain the task. B. Add the full source tree to CLAUDE.m
 **Q10.8** A CI job must have Claude Code review a pull request diff and post findings. No human is present to approve prompts, and the runner is shared with other jobs. Which setup is most appropriate?
 
 A. Run `claude -p` non-interactively with a narrowly scoped `--allowedTools` list (for example read and specific `git` commands) and no dangerous bypass. B. Run the interactive CLI under a terminal multiplexer and send keystrokes to approve prompts. C. Use `--dangerously-skip-permissions` on the shared runner for reliability. D. Run in `plan` mode so Claude can also post the comment.
+
+**Q10.9** A developer leaves Claude Code on Max effort all day. They notice that even simple lookups, such as “which port does the dev server use?”, take a long time and use a lot of their plan’s limits. Which explanation is correct?
+
+A. Max effort is a fixed thinking budget that is spent in full on every request, whatever the task. B. Thinking is adaptive, so a lookup gets less reasoning than a hard task, but Max shifts the whole range: more thinking than needed, extra tool calls to double-check, and longer replies. Low effort suits lookups. C. The model ignores the effort setting on simple lookups, so the cost must come from something else in the session. D. Max effort automatically turns on Ultracode, which runs every request as a multi-agent workflow.
+
+**Q10.10** A developer’s session runs at Medium effort. They open the `/effort` menu, press Tab to switch the Ultracode toggle on, and apply it. What effort level does the session run at now?
+
+A. `xhigh`, because Ultracode always forces the session to Extra effort. B. `max`, because Ultracode sits above Max in the menu. C. None. Ultracode replaces the effort setting and each workflow agent chooses its own. D. Still `medium`. The toggle leaves the effort level unchanged; only launching with `claude --effort ultracode` also sets `xhigh`.
+
+**Q10.11** A developer wants Claude Code to audit all 400 route handlers in a repository for missing authentication checks, using many agents that verify each other’s findings. The rest of the day’s session will be ordinary small edits. What is the most appropriate way to run the audit?
+
+A. Leave the Ultracode toggle off and include the keyword `ultracode` in the audit prompt (or ask for a workflow), so only that task runs as a workflow. B. Set the session to Max effort, so one agent works through all 400 files more thoroughly. C. Add `"ultracode": true` to the project settings file, so every session from now on uses workflows. D. Run `claude -p "ultracode: audit every route handler..."` from a script, so the keyword starts the workflow in the background.
+
+**Q10.12** A team lead reviews a Claude Code session that ran in `auto` permission mode with Ultracode on. A workflow launched 60 agents. The lead expected a *Large workflow* warning and an approval prompt before the first launch, and saw neither. What explains this?
+
+A. A defect: the *Large workflow* warning appears above 25 agents in every session. B. The agents ran in `bypassPermissions` mode, which suppresses all warnings and prompts. C. Turning Ultracode on counts as agreeing to large runs, so the warning, the limit on concurrent subagents, and the first-launch approval in `auto` mode are skipped. Each agent’s tool calls still go through the normal permission rules. D. Workflows with fewer than 100 agents never show a warning or an approval prompt.

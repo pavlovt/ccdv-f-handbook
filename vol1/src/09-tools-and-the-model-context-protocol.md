@@ -599,3 +599,34 @@ A. `strict` is broken for date formats; remove it and validate in code. B. The m
 **Q9.15** You are building an MCP server for an analytics database. You want the host application to be able to attach the table schemas as background context for the model whenever a user opens a data-analysis session, without the model having to decide to fetch them. Which primitive fits best?
 
 A. A tool named `get_schema`, since only tools can return data. B. A resource exposing the schema, which the application chooses to attach. C. A prompt that embeds the schema text in its name. D. A sampling request from the server to the client.
+
+**Q9.16** A new developer writes a `refund_order` handler that runs a regular expression over the customer’s latest message to find the order ID and the amount, reasoning that the tool is given the conversation. The tool’s `input_schema` has no properties. What is wrong with this design?
+
+A. Nothing; the API forwards the latest user message to the tool as its input, so the handler has to parse it. B. The tool receives the whole `messages` array, so the handler should search every turn, not only the latest one. C. The tool receives the text block the model writes before the `tool_use` block, so the handler should parse that text instead. D. The tool receives only the `input` object the model writes from the conversation; declare `order_id` and `amount_cents` as schema parameters and let the model fill them.
+
+**Q9.17** A team adds strict mode to a tool, but calls still occasionally arrive with an extra `notify` field and with `amount_cents` as the string `"1999"`. The definition is:
+
+``` {.sourceCode .python}
+{"name": "refund_order",
+ "description": "Refund a customer order.",
+ "input_schema": {"type": "object", "strict": True,
+                  "properties": {"order_id": {"type": "string"},
+                                 "amount_cents": {"type": "integer"}},
+                  "required": ["order_id", "amount_cents"]}}
+```
+
+What is the fix?
+
+A. Strict mode takes effect only when the tool is forced, so set `tool_choice` to `{"type": "tool", "name": "refund_order"}`. B. Move `strict` to the top level of the tool definition, next to `name` and `description`, and add `"additionalProperties": False` to the schema. C. Set `strict` on `tool_choice` instead, as `{"type": "auto", "strict": True}`. D. Strict mode supports only string parameters, so declare `amount_cents` as a string and convert it in the handler.
+
+**Q9.18** Refunds must never exceed 50,000 cents. A developer adds `"maximum": 50000` to `amount_cents` in a `strict: true` tool and sends the definition from a raw HTTP client; the request fails with a 400. What is the best fix?
+
+A. Remove `strict` from the tool, because enforcing the cap matters more than a guaranteed schema. B. Replace `maximum` with an `enum` listing every allowed amount from 0 to 50,000. C. Remove `maximum`, state the cap in the parameter description, and enforce it in the handler, returning an `is_error` result that explains the limit when it is exceeded. D. Change `amount_cents` to a string with the pattern `^[0-9]{1,5}$`, which keeps the value under the cap.
+
+**Q9.19** A `refund_order` handler asks an operator to approve large refunds. When the operator declines, the handler returns a `tool_result` with `is_error: true` and the content “Refund failed.” Logs show the model then calls `refund_order` two or three more times and tells the customer there is a technical problem. What is the best change?
+
+A. Set `disable_parallel_tool_use: true` so the model cannot call the tool again in the same turn. B. Remove `refund_order` from the `tools` list for the rest of the conversation after any decline. C. Keep `is_error: true` and add a system prompt rule that the model must never retry a refund. D. Return the decline as a normal result without `is_error`, saying that an operator declined the refund and what to tell the customer.
+
+**Q9.20** Refunds above \$5 must never be issued without a person’s approval, whatever the model decides. Which design meets this requirement?
+
+A. In the `refund_order` handler, before the payment call, check the amount and require explicit approval above the threshold, treating anything other than a clear yes as a decline. B. Add a system prompt instruction: “Before calling `refund_order` for more than \$5, always ask the customer to confirm.” C. Set `strict: true` on the tool so the model cannot produce an amount above 500 cents without approval. D. Add a required boolean parameter `human_approved` to the schema and issue the refund only when the model sets it to `true`.

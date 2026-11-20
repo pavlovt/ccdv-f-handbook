@@ -12,6 +12,19 @@ The model never executes anything. It produces a structured request, and your co
 4.  You send a new request. It contains the full history so far, including the assistant turn exactly as returned, followed by a user message holding `tool_result` blocks.
 5.  The model reads the results and either answers or requests more tools. You repeat until `stop_reason` is something other than `"tool_use"`.
 
+Be clear about what reaches your function. The `messages` you send go to the model, not to the tool. The model reads the conversation and writes the tool’s arguments itself, in the `input` field of the `tool_use` block, and that object is the only thing your code passes to the tool. If a customer writes “Order ORD-20481932 arrived smashed. Refund the \$19.99.”, the user message is an English sentence, but the call the model produces is:
+
+``` {.sourceCode .json}
+{
+  "type": "tool_use",
+  "id": "toolu_01AbC",
+  "name": "refund_order",
+  "input": { "order_id": "ORD-20481932", "amount_cents": 1999, "reason": "damaged" }
+}
+```
+
+The model has done a translation: it found the order ID in the sentence, turned “\$19.99” into the integer `1999` because the schema asks for cents, and mapped “smashed” onto `damaged`, one of the values the schema allows. Your code then calls `refund_order(**block.input)`. Every way a tool call can go wrong (a missing field, a wrong type, a value outside the enum, a plausible but wrong ID) is a fault in that translation step, which is why the later sections on schemas, strict mode and validation all focus on `input`.
+
 Two properties of this loop matter for everything that follows. First, the API is stateless: every request must carry the whole conversation, so the `tool_use` blocks from step 2 must be present in the history when you submit the results in step 4. Second, the decision to call a tool is made by the model from text alone. The description you wrote is the only evidence it has about what your function does.
 
 Tool definitions count as input tokens on every request, and each model adds a small fixed system-prompt overhead whenever tools are enabled. Large tool catalogs therefore cost money and latency, and they also dilute the model’s attention; we return to this when discussing granularity and tool search.
@@ -274,13 +287,78 @@ Even a well-described tool will occasionally receive bad input. Know the layers 
 
 **Prevention in the definition.** Tight schemas (enums, patterns, ranges, `required`), explicit provenance for IDs (“must come from a previous tool result”), and `input_examples` for tricky formats prevent most problems.
 
-**Strict tool use.** Setting `"strict": true` on a tool constrains sampling so that the `input` conforms to your `input_schema` (an integer arrives as `2`, not `"2"`) and the tool `name` is always one you supplied. Use `"additionalProperties": false` in the schema alongside it. This removes validate-and-retry code for structural errors. It does not make the values correct: a schema-valid date can still be the wrong date, a valid enum member can still be the wrong member, and it does not guarantee the model calls a tool at all.
+**Strict tool use.** Without `strict`, the `input_schema` is guidance the model almost always follows, but nothing enforces it. Take the refund tool from the start of the chapter. Once in a while its `input` can arrive in one of these shapes:
+
+``` {.sourceCode .json}
+{"order_id": "ORD-20481932", "amount_cents": "1999", "reason": "damaged"}
+{"order_id": "ORD-20481932", "reason": "broken"}
+{"order_id": "ORD-20481932", "amount_cents": 1999, "reason": "late", "notify": true}
+```
+
+The first sends the number as a string. The second leaves out a required field and uses a reason that is not in the enum. The third adds a field the tool never defined. Each one reaches your function unless you check for it.
+
+Setting `"strict": true` on the tool makes the schema a hard rule. The API restricts what the model can generate while it writes the arguments, so the only output it can produce is JSON that matches the schema. Nothing is checked or rejected afterwards; an invalid call cannot be produced in the first place. The tool `name` is also always one you supplied. Two changes turn it on:
+
+``` {.sourceCode .python}
+tools = [{
+    "name": "refund_order",
+    "description": "Refund a customer order. The order ID must come from the user or lookup_order.",
+    "strict": True,                          # 1. on the tool, next to name and description
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "order_id":     {"type": "string"},
+            "amount_cents": {"type": "integer"},
+            "reason":       {"type": "string", "enum": ["damaged", "late", "wrong_item"]},
+        },
+        "required": ["order_id", "amount_cents", "reason"],
+        "additionalProperties": False,       # 2. required on every object in a strict schema
+    },
+}]
+```
+
+Now the only shape the call can take is `{"order_id": "...", "amount_cents": 1999, "reason": "damaged"}`: an integer amount, one of the three reasons, nothing missing and nothing extra. This removes the validate-and-retry code you would otherwise write for structural errors. Note where `strict` goes: at the top level of the tool definition, not inside `input_schema` and not on `tool_choice`. The schema is also limited to the subset described in Chapter 5, so `minimum`, `maximum`, `minLength` and `maxLength` are not allowed; a rule such as “no more than 50000 cents” has to be checked in your handler.
+
+Strict mode does not make the values correct. A schema-valid date can still be the wrong date, a valid enum member can still be the wrong member, and a well-formed order ID can still belong to a different customer. It also does not guarantee that the model calls a tool at all. On models that reject forced `tool_choice`, the usual pattern is `auto` plus a strict tool, with the prompt telling the model which tool to use. Two exceptions remain: a response that stops with `stop_reason` `refusal` or `max_tokens` can leave the arguments incomplete, so check `stop_reason` before running anything.
 
 **Validation in your handler.** Treat tool input as untrusted user input, because it is derived from untrusted text. Validate types and ranges, check authorization for the acting user (never trust a `user_id` the model supplies), and verify that referenced entities exist. A hallucinated ID will usually fail the existence check; return an error that tells the model where valid IDs come from.
 
 **Recovery.** Return the validation error with `is_error: true` and let the model retry. If a specific argument keeps going wrong, the fix is almost always in the description or schema, not in more retries.
 
 **Dangerous actions.** For irreversible operations, add a human confirmation step outside the model: have the tool return a preview or a pending-approval status, and require explicit approval before the real action. The model’s confidence is not an authorization mechanism.
+
+The natural place for the check is inside the handler, immediately before the side effect. Whatever the model decided, and whether your own loop or an SDK helper calls the function, nothing happens until a person agrees. Here is the refund handler with an approval step:
+
+``` {.sourceCode .python}
+AUTO_APPROVE_LIMIT_CENTS = 500          # refunds up to $5.00 need no human
+
+def ask_operator(order_id: str, amount_cents: int, reason: str) -> bool:
+    """Show the pending refund and wait for a yes or no from a person."""
+    print(f"Refund {order_id}: ${amount_cents / 100:.2f} ({reason})")
+    return input("Approve? [y/N] ").strip().lower() == "y"
+
+def refund_order(order_id: str, amount_cents: int, reason: str) -> str:
+    if order_id not in ORDERS:
+        raise ToolInputError(f"No order {order_id}. Use lookup_order to find the ID.")
+
+    # The approval gate: runs before any money moves.
+    if amount_cents > AUTO_APPROVE_LIMIT_CENTS:
+        if not ask_operator(order_id, amount_cents, reason):
+            return (f"Refund for {order_id} was NOT issued: an operator declined it. "
+                    "Tell the customer the request has been passed to the support team.")
+
+    issue_refund(order_id, amount_cents)     # the real payment call
+    return f"Refund of {amount_cents} cents issued for {order_id}. Ref: RF-7781"
+```
+
+Four choices in this code matter more than its details:
+
+-   **The default is no.** With `[y/N]`, anything other than an explicit `y`, including just pressing Enter, declines. For an action that moves money, a mistake should leave things as they were.
+-   **A decline is a normal result, not an error.** The tool worked correctly and a person said no, so the handler returns a plain string without `is_error`. The model reads it and tells the customer what happened. Marking it as an error would suggest something broke, and the model might retry the call.
+-   **The operator sees the arguments that will be executed.** The prompt shows the model’s `input` (order, amount, reason), not the customer’s original sentence. If the model misread “\$19.99”, the operator catches it here.
+-   **A threshold keeps people for the cases that matter.** Small refunds go through without a person. Set the limit to match the risk.
+
+`input()` works only when someone is at the terminal. In a web application the gate has the same shape, but it does not wait: `ask_operator` records the pending refund (an approvals table, a chat message with Approve and Decline buttons) and the handler returns at once with a status such as “Refund for ORD-20481932 is awaiting approval (ticket APR-311).” The model tells the customer the request is pending, and the refund is issued later by whatever handles the Approve button, outside the model loop.
 
 ## Server-Side and Built-In Tools
 
@@ -445,7 +523,9 @@ Security applies on every path. A tool description or result from a third-party 
 -   `tool_result` blocks go first, immediately after the matching assistant turn, one per `tool_use`, all in one user message.
 -   Use `tool_choice` to force or forbid; know its limits with thinking and newer models.
 -   Return recoverable errors with `is_error: true` and an instructive message; raise and log your own bugs.
+-   `messages` go to the model; the tool receives only the `input` the model writes from them.
 -   `strict: true` guarantees shape, not truth. Validate and authorize in the handler.
+-   Gate irreversible actions inside the handler, before the side effect. Default to no, and return a decline as a normal result, not an error.
 -   MCP standardizes integration: host, client, server; stdio and Streamable HTTP; tools, resources, prompts. Build a server when many consumers share a capability; otherwise hand-wire.
 -   The API’s MCP connector reaches remote servers only and supports tools only.
 

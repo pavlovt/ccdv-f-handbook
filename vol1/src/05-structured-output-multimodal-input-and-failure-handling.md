@@ -139,7 +139,7 @@ For HIPAA-regulated work, structured outputs are HIPAA eligible, but the schema 
 
 ## Tool Use as a Structured Output Mechanism
 
-Before constrained output existed, the standard technique for reliable JSON was to define a tool whose `input_schema` was your target shape, force the model to call it, and read the arguments without ever executing anything. It remains relevant: it works on older models that lack constrained output, it is how you get structured *tool arguments* rather than a structured final answer, and a large amount of existing code does it. One version caveat: forcing a tool (`tool_choice` of `any` or `tool`) returns a 400 on Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1, so the example below targets Haiku 5.5. On those four models, use `output_config.format`, or keep `tool_choice` at `auto` with a `strict: true` tool and tell the model in the prompt to call it.
+Before constrained output existed, the standard technique for reliable JSON was to define a tool whose `input_schema` was your target shape, force the model to call it, and read the arguments without ever executing anything. It remains relevant: it works on older models that lack constrained output, it is how you get structured *tool arguments* rather than a structured final answer, and a large amount of existing code does it. One version caveat: forcing a tool (`tool_choice` of `any` or `tool`) returns a 400 on Fable 5.2, Mythos 5.2, Opus 5.5, Sonnet 5.5, Fable 5.1, and Mythos 5.1, so the example below targets Haiku 5.5. On those six models, use `output_config.format`, or keep `tool_choice` at `auto` with a `strict: true` tool and tell the model in the prompt to call it.
 
 ``` {.sourceCode .python}
 tools = [{
@@ -201,7 +201,7 @@ Which mechanism to use:
 
   Structured output on a model without `output_config` support   Forced tool call
 
-  Structured output alongside citations                          Forced tool call (citations conflict with `output_config.format`)
+  Structured output alongside citations                          Cited `field: value` lines, parsed in code (see Citations)
   ----------------------------------------------------------------------------------------------------------------------------------
 
 ## Prefill, and Why It Is Mostly Historical
@@ -327,7 +327,7 @@ PDFs go in `document` content blocks.
  "cache_control": {"type": "ephemeral"}}
 ```
 
-Source types mirror images: `base64`, `url`, and `file` (a Files API id). The `file` source additionally supports `title`, `context`, and `citations: {"enabled": true}`.
+Source types mirror images: `base64`, `url`, and `file` (a Files API id). Any document block also accepts `title`, `context`, and `citations: {"enabled": true}`, described under Citations below.
 
   --------------------------------------------------------------------------------------------
   Limit                               Value
@@ -346,6 +346,91 @@ A 200-page report is therefore a 300,000–600,000 token input before page image
 PDFs are cacheable — put `cache_control` on the document block, the standard pattern for repeated queries against one document. They also work in batches.
 
 Plain-text documents (`.txt`, `.csv`, `.md`) can be sent as `document` blocks, uploaded to the Files API with MIME type `text/plain`. Binary office formats (`.xlsx`, `.docx`) are **not** supported in document blocks; convert them to text, or to PDF when images matter.
+
+## Citations
+
+Citations tie each claim in Claude’s answer to the exact passage of your document that supports it. You switch them on per document, and the answer comes back split into text blocks, each carrying pointers into your sources. The point is that the answer becomes checkable: your application can show the quoted sentence next to each statement, link to the page it came from, or flag a claim that arrives with no source. Asking the model in the prompt to “quote your sources” gives no such guarantee, because the quotes can be paraphrased or invented. With the citations feature, the API takes the quoted text from your document itself, so every pointer is valid.
+
+Enable them with `citations: {"enabled": true}` on the document block:
+
+``` {.sourceCode .python}
+response = client.messages.create(
+    model="claude-sonnet-5-5",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": [
+        {"type": "document",
+         "source": {"type": "text", "media_type": "text/plain",
+                    "data": "The grass is green. The sky is blue."},
+         "title": "Style Guide",
+         "context": "Internal document, revised March 2026.",
+         "citations": {"enabled": True}},
+        {"type": "text", "text": "What colour is the grass?"},
+    ]}],
+)
+```
+
+The reply is several `text` blocks. Plain connecting text has no `citations` field; a block that states something from the document carries a list of the passages behind it:
+
+``` {.sourceCode .json}
+"content": [
+  {"type": "text", "text": "According to the guide, "},
+  {"type": "text", "text": "the grass is green",
+   "citations": [{
+     "type": "char_location",
+     "cited_text": "The grass is green. ",
+     "document_index": 0,
+     "document_title": "Style Guide",
+     "start_char_index": 0,
+     "end_char_index": 20
+   }]},
+  {"type": "text", "text": "."}
+]
+```
+
+To show the answer, join the `text` fields in order; to show its sources, read the `citations` on each block. `document_index` says which document the passage came from, counting every document block in the request from 0 across all messages. The location fields depend on the document type:
+
+  -----------------------------------------------------------------------------------------------------------------
+  Document type                       How the API splits it               Citation `type` and location
+  ----------------------------------- ----------------------------------- -----------------------------------------
+  Plain text                          Into sentences                      `char_location`: character range,
+                                                                          0-indexed, end exclusive
+
+  PDF                                 Extracted text, into sentences      `page_location`: page range, 1-indexed,
+                                                                          end exclusive
+
+  Custom content (`source.type`       Not at all: each text block you     `content_block_location`: block range,
+  `content`)                          supply is one citable unit          0-indexed, end exclusive
+  -----------------------------------------------------------------------------------------------------------------
+
+The split sets the smallest piece Claude can cite. Sentence splitting suits prose; for bullet lists, transcripts or retrieved chunks that should be cited whole, put each piece in its own block of a custom content document, or each chunk in its own plain text document.
+
+Rules worth knowing:
+
+-   **All or none.** A request cannot mix documents with citations enabled and documents without them.
+-   **Only text is citable.** Claude cannot cite images, so a scanned PDF with no text layer produces no citations.
+-   **`title` and `context` are never cited.** Both are passed to the model; `context` is the place for document metadata, as text or stringified JSON.
+-   **Cost.** Input grows slightly, from the added system prompt and the splitting. `cited_text` does not count toward output tokens, nor toward input tokens when you send the reply back on a later turn.
+-   **Streaming.** Each citation arrives as a `citations_delta` inside a `content_block_delta` event and is appended to the current text block’s `citations` list.
+-   **Compatibility.** Citations work with prompt caching, token counting and batches. Turning them on or off changes the system prompt the API builds, which invalidates the cache from the system level down (Chapter 4). On API version `2026-10-21`, a text block that still carries `citations` is rejected in a `user` message, so strip them before passing one call’s answer to another as input (Chapter 3).
+
+### Citations and Structured Output
+
+Citations cannot be combined with `output_config.format` (or the deprecated `output_format`): a request that enables citations on any document or search result and also sets a schema returns a 400. The two want different shapes of reply. Citations come back interleaved with many text blocks; a schema forces the whole answer into one JSON string.
+
+A forced tool call does not get around this. Citations are returned on text blocks, and a forced call makes the reply open with the `tool_use` block, so its arguments come back with no sources attached. Forcing is also rejected outright on the newest models (see the caveat under Tool Use as a Structured Output Mechanism).
+
+The documented way to get structured data *with* a citation for each value is to ask for one line per field and build the object yourself:
+
+```
+Extract these fields from the document: grass_color, sky_color.
+Answer with one line per field in the form "field: value", and cite the
+document for each line. After the colon, write only the value, with no
+explanation or quotation.
+```
+
+The reply arrives as text blocks such as `"grass_color: "`, then `"green"` with its citation, then `"\nsky_color: "`, then `"blue"` with its own. To parse it: join the blocks into lines, attach each block’s citations to the line that contains its text, split each line at its first colon, ignore names that are not your fields, and **check that every field has a value and at least one citation**, since the API guarantees neither. Avoid prompts that demand “only a JSON object”: the request succeeds, but the reply may carry few or no citations.
+
+When the downstream consumer needs schema-guaranteed JSON, split the work into two calls: one with citations that produces the cited answer, and one with `output_config.format` and no citations that turns it into the object.
 
 ## The Files API
 
@@ -607,7 +692,7 @@ A. Replace `anyOf` unions with free-form strings everywhere. B. Split the schema
 
 **Q5.5** You want structured JSON output on a request that also has citations enabled. The request returns 400. What should you do?
 
-A. Add the `structured-outputs-2025-11-13` beta header. B. Citations are incompatible with `output_config.format`; use a forced tool call to get structured output instead. C. Move the schema into the system prompt as text. D. Disable `additionalProperties: false` to reduce conflict.
+A. Add the `structured-outputs-2025-11-13` beta header. B. Citations are incompatible with `output_config.format`; drop the schema, ask for one `field: value` line per field, and parse the cited text blocks in your code. C. Move the schema into the system prompt as text. D. Disable `additionalProperties: false` to reduce conflict.
 
 **Q5.6** Legacy code ends `messages` with `{"role": "assistant", "content": "{"}` to force JSON. After a model upgrade it returns 400. Why, and what replaces it?
 

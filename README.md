@@ -19,6 +19,7 @@ style.css            shared stylesheet for all three books
 build.py             builds the EPUBs into dist/
 preflight.py         checks questions against answer keys
 volN/meta.yaml       title page, EPUB metadata, output file name
+volN/cover.png       cover image (optional)
 volN/src/NN-*.md     one file per chapter, exam or answer key
 dist/                build output (not committed)
 ```

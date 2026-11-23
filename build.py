@@ -7,9 +7,10 @@ Usage:
     python build.py --check    # run preflight.py first, stop on defects
 
 Each volume folder holds meta.yaml (title page and EPUB metadata, plus the
-output file name) and src/*.md. Files are assembled in filename order, so the
-two-digit prefix decides where a file sits in the book. Every file must start
-with a level-1 heading; each level-1 heading becomes a new EPUB chapter.
+output file name), src/*.md and an optional cover.png. Files are assembled in
+filename order, so the two-digit prefix decides where a file sits in the book.
+Every file must start with a level-1 heading; each level-1 heading becomes a
+new EPUB chapter.
 Output goes to dist/. Requires pandoc on PATH (2.9 or later).
 """
 import os, re, subprocess, sys, glob, zipfile, shutil
@@ -145,6 +146,9 @@ def build(vol):
     # Embed the body font so readers never substitute a system font for it.
     for font in sorted(glob.glob(os.path.join(ROOT, "fonts", "*.ttf"))):
         cmd += ["--epub-embed-font", font]
+    cover = os.path.join(ROOT, vol, "cover.png")
+    if os.path.exists(cover):
+        cmd += ["--epub-cover-image", cover]
     cmd += ["-o", out] + files
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:

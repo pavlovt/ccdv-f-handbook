@@ -1,4 +1,4 @@
-# CCDV-F Study Handbook — sources
+<img src=".github/banner.png" alt="CCDV-F Study Handbook: three volumes, 1,007 questions" width="100%">
 
 Markdown sources for the three-volume study handbook for the **Claude Certified Developer – Foundations (CCDV-F)** exam, and the scripts that build them into EPUB.
 
